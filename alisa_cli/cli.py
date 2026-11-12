@@ -210,6 +210,10 @@ def friendly(error):
        'voice_server_upstream_error':'ChatGPT завершил голосовой сеанс с upstream_error. Возвращена Алиса.',
        'voice_server_error':'ChatGPT завершил голосовой сеанс с server_error. Возвращена Алиса.',
        'webrtc_connect_timeout':'Не открылся управляющий канал Voice. Проверьте сеть/VPN; этап соединения сохранён в диагностике.',
+       'ask_no_answer':'ChatGPT не ответил на одноразовый вопрос. Алиса возвращена; попробуйте повторить.',
+       'ask_relay_failed':'Не удалось передать вопрос в ChatGPT. Алиса возвращена; попробуйте повторить.',
+       'voice_busy':'Сейчас идёт другой разговор. Дождитесь его окончания.',
+       'invalid_question':'Введите вопрос после фразы.',
        'ice_gather_timeout':'Не удалось собрать сетевые адреса Voice вовремя. Проверьте сеть/VPN и настройку STUN.'}.get(error,error)
 
 def installation_options(config,network_result):
@@ -386,7 +390,7 @@ def _main(argv=None):
             if args.operation=='components':
                 if mode!='native':raise ValueError('Обновление компонентов доступно в нативном режиме')
                 current=runtime.status(config)
-                if current.get('phase') in ('active','connecting','opening','starting','stopping'):
+                if current.get('phase') in ('active','answering','connecting','opening','starting','stopping'):
                     raise RuntimeError('Сначала закройте голосовой чат выбранной колонки.')
                 from .install import install
                 show(install(config,activate=bool(current.get('agent_connected'))))

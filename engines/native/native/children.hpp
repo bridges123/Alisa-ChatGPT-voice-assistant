@@ -92,8 +92,8 @@ public:
         });
     }
     bool connected()const{return ready;}
-    bool acquire(){
-        if(!ready)return false;focus=false;child.send("CHAT\n");
+    bool acquire(bool one_shot=false){
+        if(!ready)return false;focus=false;child.send(one_shot?"ASK\n":"CHAT\n");
         std::unique_lock<std::mutex> lock(mutex);
         return changed.wait_for(lock,std::chrono::seconds(5),[&]{return focus||!ready||stopping;})&&focus;
     }

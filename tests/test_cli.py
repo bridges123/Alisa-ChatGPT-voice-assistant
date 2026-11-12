@@ -1,4 +1,4 @@
-import base64,ctypes,json,os,subprocess,tempfile,unittest
+import base64,ctypes,json,os,shlex,subprocess,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from alisa_cli import state,network,vless,autostart
@@ -61,6 +61,15 @@ class ConfigTests(unittest.TestCase):
   p=dict(state.DEFAULT_PHRASES);p['close']=p['open']
   with self.assertRaises(ValueError):state.command_file(p)
   self.assertNotIn(b'$',state.command_file(state.DEFAULT_PHRASES))
+ def test_native_ask_passes_the_question_as_one_quoted_argument(self):
+  from alisa_cli import runtime
+  c=configured('native');question='что такое "сова" и зачем она'
+  reply=subprocess.CompletedProcess([],0,stdout=b'{"ok":true,"queued":true}',stderr=b'')
+  with patch('alisa_cli.runtime.Station.run',return_value=reply) as run:
+   self.assertTrue(runtime.native_action(c,'ask',question)['queued'])
+  command=run.call_args.args[0]
+  self.assertIn('bin/alisa-standalone ask ',command)
+  self.assertIn(shlex.quote(question),command)
  def test_ssh_host_cannot_be_option(self):
   for value in ['-oProxyCommand=id','alice\nroot','']:
    c=state.defaults('native');c['host']=value

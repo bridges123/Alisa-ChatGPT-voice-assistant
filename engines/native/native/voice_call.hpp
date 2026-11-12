@@ -28,6 +28,9 @@
 struct CallOptions {
     std::string voice="cove",device="default",microphone;
     std::string conversation_id,parent_message_id,voice_session_id;
+    // Set only for a one-shot question: the text is relayed once and the call
+    // ends after the spoken answer. No chat entry is created or updated.
+    std::string ask_text;
     std::string synthetic_text="Проверка экспериментального клиента. Ответь одним словом: готово.";
     std::string expected_reply="готов";
     bool probe=false;
@@ -280,6 +283,12 @@ public:
     void stop(){stop_requested=true;changed.notify_all();std::lock_guard<std::mutex> lock(callback_mutex);accept_updates=false;}
     bool speaking()const{return is_speaking;}
     void check(){relay_text("Проверка автономного клиента на колонке. Ответь только: автономный режим готов.");}
+    // Relay typed text into an already open conversation. Used by both the
+    // diagnostic check and the one-shot question in an active chat.
+    void ask(const std::string &text){
+        if(text.empty()||text.size()>1024)throw std::runtime_error("invalid_question");
+        relay_text(text);
+    }
     void interrupt(){
         ++interruptions;
         flush_output=true;
@@ -401,7 +410,9 @@ public:
             if(options.connected)options.connected();
         }
         auto start=Clock::now(),tick=start;
-        bool asked=false;bool starving=false;
+        const bool one_shot=!options.ask_text.empty();
+        bool probe_asked=false,ask_sent=false,ask_timeout=false;Clock::time_point asked_at{};
+        bool starving=false;
 #ifndef ALISA_USE_NETEQ
         SpeechTempo tempo;bool tail_flushed=false;
 #endif
@@ -449,8 +460,14 @@ public:
                 rtp_config->timestamp+=960;
                 track->send(reinterpret_cast<const rtc::byte *>(encoded),static_cast<size_t>(size));++sent;
             }
-            if(options.probe&&!asked&&Clock::now()-start>std::chrono::milliseconds(500)&&dc->isOpen()){
-                relay_text(options.synthetic_text);asked=true;
+            if(options.probe&&!probe_asked&&Clock::now()-start>std::chrono::milliseconds(500)&&dc->isOpen()){
+                relay_text(options.synthetic_text);probe_asked=true;
+            }
+            // Relay the question once the data channel is open. A failed relay
+            // is not retried: the caller reports ask_no_answer instead.
+            if(one_shot&&!ask_sent&&Clock::now()-start>std::chrono::milliseconds(400)&&dc->isOpen()){
+                try{relay_text(options.ask_text);ask_sent=true;asked_at=Clock::now();}
+                catch(const std::exception &){failed=true;}
             }
             short samples[960*2]{};
 #ifdef ALISA_USE_NETEQ
@@ -525,12 +542,30 @@ public:
                    last_speech!=Clock::time_point::min()&&Clock::now()-last_speech>std::chrono::seconds(2))break;
                 if(Clock::now()-start>std::chrono::seconds(30))break;
             }
+            if(one_shot&&ask_sent){
+                OneShotAnswer answer;
+                answer.asked=true;answer.heard=last_speech!=Clock::time_point::min();
+                answer.audible_blocks=audible_blocks.load();
+                if(answer.heard)answer.silence_seconds=std::chrono::duration<double>(Clock::now()-last_speech).count();
+                if(one_shot_complete(answer))break;
+                if(one_shot_timeout(std::chrono::duration<double>(Clock::now()-asked_at).count())){ask_timeout=true;break;}
+            }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
         }
         json result=stats();result["underruns"]=output.underruns;
-        result["success"]=!failed&&audible_blocks>8&&assistant_seen;
+        const bool answered=one_shot&&ask_sent&&audible_blocks>8&&last_speech!=Clock::time_point::min();
+        if(one_shot){
+            // A user-requested close is not a failed question.
+            const bool cancelled=stop_requested.load()||stopping.load();
+            result["one_shot"]=true;result["answer_complete"]=answered&&!ask_timeout;
+            result["success"]=answered&&!ask_timeout;
+            if(ask_timeout)result["error"]="ask_no_answer";
+            else if(!answered&&!cancelled)result["error"]=ask_sent?"ask_no_answer":"ask_relay_failed";
+        }else result["success"]=!failed&&audible_blocks>8&&assistant_seen;
         {std::lock_guard<std::mutex> lock(mutex);result["identity"]=identity;
-            if(!server_state.error.empty())result["error"]=server_state.error;
+            // A goodbye after a spoken one-shot answer is not a failure: the
+            // user already heard the answer and Alice is being returned.
+            if(!server_state.error.empty()&&!(one_shot&&answered))result["error"]=server_state.error;
             if(options.probe)result["synthetic_caption"]=probe_caption;}
         stop();pc->close();return result;
     }

@@ -44,11 +44,12 @@ class VoiceDaemon {
             }
             std::string action=request.value("action",std::string());
             if(action=="close")continue;
+            const bool one_shot=action=="ask";
             std::thread indicator_reader;
             std::shared_ptr<Child> light;
             std::shared_ptr<VoiceCall> active;
             try{
-                if(agent&&!agent->acquire())throw std::runtime_error("native_focus_not_ready");
+                if(agent&&!agent->acquire(one_shot))throw std::runtime_error("native_focus_not_ready");
                 auto still_current=[&]{std::lock_guard<std::mutex> lock(mutex);
                     return request.value("_generation",0UL)==generation&&!stopping&&!ending;};
                 if(!still_current())throw std::runtime_error("call_cancelled");
@@ -58,23 +59,31 @@ class VoiceDaemon {
                     indicator_reader=std::thread([readfd]{char b[128];while(read(readfd,b,sizeof(b))>0){}close(readfd);});
                     std::lock_guard<std::mutex> lock(mutex);indicator=light;
                 }
-                auto entry=settings.select(action,request.value("chat_id",std::string()));
+                // A one-shot question must never create or update a chat entry.
+                json entry=one_shot?json::object():settings.select(action,request.value("chat_id",std::string()));
                 auto auth=ensure_web_auth(state/"web-session.json",&preparing_cancel);
                 if(!still_current())throw std::runtime_error("call_cancelled");
                 std::string account=auth.contains("account_id")&&auth["account_id"].is_string()?auth["account_id"].get<std::string>():"";
-                if(!entry.value("account_id",std::string()).empty()&&entry["account_id"]!=account)throw std::runtime_error("chat_account_mismatch");
+                if(!one_shot&&!entry.value("account_id",std::string()).empty()&&entry["account_id"]!=account)throw std::runtime_error("chat_account_mismatch");
                 CallOptions options;
                 options.voice=settings.view().value("voice",std::string("cove"));
                 options.device=test_mode?"null":"default";
-                if(!test_mode)options.microphone=(runtime_directory/"microphone.sock").string();
-                options.conversation_id=entry.value("conversation_id",std::string());
-                options.parent_message_id=entry.value("parent_message_id",std::string());
-                options.voice_session_id=entry.value("voice_session_id",std::string());
+                // A one-shot question is text-only: never open the microphone,
+                // so the answer cannot be mistaken for new user speech.
+                if(!test_mode&&!one_shot)options.microphone=(runtime_directory/"microphone.sock").string();
+                if(one_shot)options.ask_text=request.value("text",std::string());
+                else{
+                    options.conversation_id=entry.value("conversation_id",std::string());
+                    options.parent_message_id=entry.value("parent_message_id",std::string());
+                    options.voice_session_id=entry.value("voice_session_id",std::string());
+                }
                 auto call_generation=request.value("_generation",0UL);
-                options.connected=[this,call_generation]{std::lock_guard<std::mutex> lock(mutex);
-                    if(call_generation==generation&&!stopping&&!ending)phase="active";};
-                std::string id=entry["id"].get<std::string>();
-                options.update=[this,id,account](const json &values){settings.update(id,values,account);};
+                options.connected=[this,call_generation,one_shot]{std::lock_guard<std::mutex> lock(mutex);
+                    if(call_generation==generation&&!stopping&&!ending)phase=one_shot?"answering":"active";};
+                if(!one_shot){
+                    std::string id=entry["id"].get<std::string>();
+                    options.update=[this,id,account](const json &values){settings.update(id,values,account);};
+                }
                 active=std::make_shared<VoiceCall>(options);
                 {std::lock_guard<std::mutex> lock(mutex);
                     if(request.value("_generation",0UL)!=generation)throw std::runtime_error("call_cancelled");
@@ -116,6 +125,7 @@ public:
             agent=std::make_unique<StationAgent>(base,[this](const json &event){
                 auto name=event.value("event",std::string());
                 if(name=="command")submit({{"action",event.value("action",std::string())}});
+                if(name=="ask")submit({{"action","ask"},{"text",event.value("text",std::string())}});
                 if(name=="wake"){
                     std::shared_ptr<VoiceCall> active;{std::lock_guard<std::mutex> lock(mutex);active=call;}
                     if(active)active->interrupt();
@@ -169,6 +179,29 @@ public:
             return {{"ok",true},{"led_style",led_style}};
         }
         if(action=="rename"){settings.rename(request.value("chat_id",std::string()),request.value("title",std::string()));return {{"ok",true}};}
+        if(action=="ask"){
+            // One-shot question: relay into an open conversation, otherwise
+            // queue a short call that returns Alice as soon as it answers.
+            std::string text=request.value("text",std::string());
+            if(text.empty()||text.size()>1024)throw std::runtime_error("invalid_question");
+            std::lock_guard<std::mutex> lock(mutex);
+            if(phase=="connecting"||phase=="answering")throw std::runtime_error("voice_busy");
+            if(phase=="active"&&call){
+                // The station microphone already streams the spoken question
+                // into an open chat, so relaying it again would ask twice.
+                // Only a text request from the web panel needs the relay.
+                if(request.value("source",std::string())=="web"){
+                    try{call->ask(text);}catch(const std::exception &exc){throw std::runtime_error(safe_error(exc));}
+                    return {{"ok",true},{"relayed",true}};
+                }
+                return {{"ok",true},{"heard_by_chat",true}};
+            }
+            if(call)call->stop();
+            preparing_cancel=true;++generation;
+            requests.clear();error.clear();
+            json queued=request;queued["_generation"]=generation;requests.push_back(std::move(queued));
+            changed.notify_all();return {{"ok",true},{"queued",true}};
+        }
         if(action!="open"&&action!="new"&&action!="close"&&action!="previous"&&action!="select")throw std::runtime_error("unknown_action");
         std::lock_guard<std::mutex> lock(mutex);
         if(action=="open"&&(phase=="connecting"||phase=="active"))return {{"ok",true},{"already_open",true}};
