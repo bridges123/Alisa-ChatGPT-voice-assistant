@@ -306,6 +306,7 @@ LABELS={'mode':'Режим','phase':'Состояние','agent_connected':'Ко
  'removed':'Программа удалена','reclaimed_bytes':'Освобождено байт','backup':'Копия удалённых файлов'}
 LABELS.update(vpn_enabled='Используется для GPT',vpn_removed='VLESS удалён',files_updated='Обновлено файлов',files_unchanged='Файлов уже актуально')
 LABELS.update(current_version='Установленная версия',latest_version='Новая версия',available='Доступно обновление',ask_on_start='Предлагать при запуске',platform='Система')
+LABELS.update(web_panel='Веб-панель',pairing_code='Код сопряжения')
 
 def show(value):
     if not interactive():print(json.dumps(value,ensure_ascii=False,indent=2));return

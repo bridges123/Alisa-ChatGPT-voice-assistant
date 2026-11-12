@@ -1,6 +1,6 @@
 """Compact management pages with immediate hints and cached device reads."""
 import time
-from .state import load,STYLE_NAMES,LED_SCOPE_NAMES,ASK_PHRASE_KEYS
+from .state import load,STYLE_NAMES,LED_SCOPE_NAMES,ASK_KEY
 from . import ui
 from .firmware import supports_lighting,LIGHTING_UNAVAILABLE,MODEL_NAMES
 
@@ -29,6 +29,7 @@ def entries(mode,page,config=None):
         if mode=='native':
             if config.get('model') in ('bergamot','cucumber'):values.append(('Дисплей GPT',('settings','display')))
             values.append(('Голос GPT',('voice',None)))
+            values.append(('Веб-панель',('settings','web')))
             values.append(('STUN: '+('отключён' if config.get('disable_stun',False) else 'включён'),('settings','stun')))
         values+=auto_entries(mode,config)
     elif page=='lighting':
@@ -90,8 +91,12 @@ def run(mode,execute,start_page='main'):
         return None
     def ttl(request):return 5 if request[0] in ('status','vpn') else 60 if request[0]=='network' else 30
     def phrase_summary():
-        keys=['open','close','new','previous']+(list(ASK_PHRASE_KEYS) if mode=='native' else [])
-        return '\n'.join('Алиса, '+configuration['phrases'][key]+(' …' if key in ASK_PHRASE_KEYS else '') for key in keys if key in configuration['phrases'])
+        lines=[]
+        for key in ['open','close','new','previous']+(['ask'] if mode=='native' else []):
+            value=configuration['phrases'].get(key)
+            if isinstance(value,list):lines += ['Алиса, '+text+' …' for text in value]
+            elif value:lines.append('Алиса, '+value)
+        return '\n'.join(lines)
     def led_name():
         if not supports_lighting(configuration.get('model')):return LIGHTING_UNAVAILABLE
         style=configuration['led']
@@ -137,7 +142,9 @@ def run(mode,execute,start_page='main'):
         if choice in (('settings','midi-fire-on'),('settings','midi-fire-off')):
             return ui.FocusContent('Красно-оранжевое пламя вместо радуги на кольце и логотипе Миди. Остальные выбранные цвета сохраняются. По умолчанию выключено.')
         if choice==('settings','stun'):return ui.FocusContent('STUN: '+('отключён' if configuration.get('disable_stun',False) else 'включён')+'\n\nСтандартный режим — STUN включён. При ice_gather_timeout можно попробовать отключить его. Результат зависит от сети. Изменение применяется после перезапуска GPT.')
-        if choice==('settings','phrases'):return ui.FocusContent(phrase_summary()+('\n\nТри фразы «спроси…» — варианты одного действия; вопрос добавляется после фразы.' if mode=='native' else ''))
+        if choice==('settings','phrases'):return ui.FocusContent(phrase_summary()+('\n\nФразы вопроса — варианты одного действия: вопрос добавляется после фразы. Перечисляются через запятую.' if mode=='native' else ''))
+        if choice==('settings','web'):
+            return ui.FocusContent('Адрес: http://'+(configuration.get('host') or 'IP колонки')+':18080/\n\nКод сопряжения: alisa native url\n\nПанель открывается в браузере в той же сети, что и колонка, пока запущен нативный GPT. Это необязательный интерфейс для чатов и одноразового вопроса; голосом всё работает без него.')
         if choice=='@lighting' or choice==('settings','led-scope'):return ui.FocusContent('Подсветка: '+led_name()+'\n'+LED_SCOPE_NAMES[configuration.get('led_scope','speaking')]+'\n\nПо умолчанию выбранный эффект включён только во время ответа GPT. Можно также включить его во время прослушивания и ожидания ответа, пока чат открыт. При выключенном микрофоне приоритет остаётся у штатной индикации.')
         if choice==('settings','led'):return ui.FocusContent('Подсветка: '+led_name())
         if choice in (('settings','listen-on'),('settings','listen-off')):return ui.FocusContent('В паузах GPT: '+('включена' if configuration.get('listen_led',False) else 'выключена')+'\n\nГолубая волна, пока чат GPT открыт и ответ не звучит. По умолчанию выключена. Меняется без перезапуска разговора; анимация ответа сохраняется. При цвете «Выключена» вся подсветка GPT остаётся погашенной.')

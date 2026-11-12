@@ -164,16 +164,17 @@ class NativeCommands(unittest.TestCase):
  def test_ask_aliases_extract_question_and_bare_phrase_opens_chat(self):
   p=Path(self.temp.name)/'commands.txt';p.write_bytes(state.command_file(state.DEFAULT_PHRASES))
   with patch.dict(os.environ,{'ALISA_COMMANDS_FILE':str(p)}):
-   for alias in ('спроси у чата','спроси у джипити','спроси у чатджипити'):
+   for alias in state.DEFAULT_ASK_PHRASES:
     raw=f'Алиса, {alias} Что такое СОВА?'.encode()
     self.assertEqual(self.lib.alice_native_command(raw,len(raw)),5,alias)
     self.assertEqual(self.lib.alice_native_question().decode(),'что такое сова')
-   for text in ('Алиса, спроси у чата','Алиса, спроси у джипити, пожалуйста'):
+   for text in ('Алиса, спроси у чата','Алиса, спроси у джипити, пожалуйста',
+                'Алиса, спроси чат','Алиса, спроси чатик'):
     raw=text.encode();self.assertEqual(self.lib.alice_native_command(raw,len(raw)),1,text)
    for text in ('не спроси у чата что такое сова','спроси у чатачто'):
     raw=text.encode();self.assertEqual(self.lib.alice_native_command(raw,len(raw)),0,text)
  def test_custom_ask_phrase_disables_default_alias(self):
-  p=Path(self.temp.name)/'commands.txt';phrases=dict(state.DEFAULT_PHRASES);phrases['ask']='спроси у нейросети';p.write_bytes(state.command_file(phrases))
+  p=Path(self.temp.name)/'commands.txt';phrases=dict(state.DEFAULT_PHRASES);phrases['ask']=['спроси у нейросети'];p.write_bytes(state.command_file(phrases))
   with patch.dict(os.environ,{'ALISA_COMMANDS_FILE':str(p)}):
    raw='Алиса, спроси у нейросети что такое сова'.encode()
    self.assertEqual(self.lib.alice_native_command(raw,len(raw)),5)

@@ -1,5 +1,5 @@
 """Preference edits must keep the existing call and audio processes alive."""
-import copy,json,tempfile,unittest
+import copy,json,subprocess,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from alisa_cli import cli,runtime,state,ui
@@ -14,15 +14,24 @@ class LivePreferences(unittest.TestCase):
    cli.settings(c,fields=('phrases',))
   save.assert_not_called();update.assert_not_called()
 
- def test_phrase_editor_offers_ask_aliases_only_for_native(self):
-  for mode,expected in [('native',3),('bridge',0)]:
+ def test_phrase_editor_uses_one_ask_field_only_for_native(self):
+  for mode,expected in [('native',1),('bridge',0)]:
    c=config(mode);seen=[]
-   with patch.object(ui,'text',side_effect=lambda title,default:seen.append(title) or default),patch.object(ui,'note'):
+   with patch.object(ui,'text',side_effect=lambda title,default:seen.append((title,default)) or default),patch.object(ui,'note'):
     cli.settings(c,apply=False,fields=('phrases',))
-   self.assertEqual(sum('Спросить' in title for title in seen),expected)
-   self.assertEqual(c['phrases']['ask'],'спроси у чата')
-   self.assertEqual(c['phrases']['ask_gpt'],'спроси у джипити')
-   self.assertEqual(c['phrases']['ask_chatgpt'],'спроси у чатджипити')
+   self.assertEqual(sum('Спросить' in title for title,_ in seen),expected)
+   self.assertEqual(c['phrases']['ask'],list(state.DEFAULT_ASK_PHRASES))
+   if expected:
+    value=dict(seen)['Спросить (варианты через запятую)']
+    self.assertEqual(value,', '.join(state.DEFAULT_ASK_PHRASES))
+
+ def test_phrase_editor_parses_comma_separated_ask_variants(self):
+  c=config();answer='спроси у чата, спроси чатик'
+  def text(title,default):
+   return answer if 'Спросить' in title else default
+  with patch.object(ui,'text',side_effect=text),patch.object(ui,'note'):
+   cli.settings(c,apply=False,fields=('phrases',))
+  self.assertEqual(c['phrases']['ask'],['спроси у чата','спроси чатик'])
 
  def test_phrases_apply_without_checking_or_restarting_active_audio(self):
   c=config();old=copy.deepcopy(c);c['phrases']['open']='поговорим с гпт'
@@ -92,3 +101,17 @@ class LivePreferences(unittest.TestCase):
   with patch.object(cli,'load',return_value=c),patch.object(runtime,'update_preferences') as apply,patch.object(cli,'save') as save:
    self.assertEqual(cli.main(['native','settings','listen-on']),0)
   self.assertTrue(c['listen_led']);save.assert_called_once_with(c);apply.assert_called_once()
+
+ def test_web_panel_url_action_prints_address_and_pairing_code(self):
+  c=config();c['host']='192.0.2.44'
+  reply=subprocess.CompletedProcess([],0,stdout=b'{"port":18080,"pairing_code":"12345678"}',stderr=b'')
+  shown={}
+  with patch.object(cli,'load',return_value=c),patch('alisa_cli.runtime.Station.run',return_value=reply),patch.object(cli,'show',side_effect=lambda value:shown.update(value)):
+   self.assertEqual(cli.main(['native','url']),0)
+  self.assertEqual(shown,{'web_panel':'http://192.0.2.44:18080/','pairing_code':'12345678'})
+
+ def test_settings_menu_explains_the_optional_web_panel(self):
+  from alisa_cli import menus
+  c=config();c['host']='192.0.2.44'
+  self.assertIn(('Веб-панель',('settings','web')),menus.entries('native','settings',c))
+  self.assertNotIn(('Веб-панель',('settings','web')),menus.entries('bridge','settings',c))

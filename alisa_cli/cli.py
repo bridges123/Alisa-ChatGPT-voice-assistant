@@ -1,5 +1,5 @@
 import argparse,copy,json,subprocess,sys,time
-from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate,DEFAULT_PHRASES,ASK_PHRASE_KEYS
+from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate,DEFAULT_PHRASES,ASK_KEY,parse_phrase_list
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
 from . import __version__,updates
@@ -70,20 +70,29 @@ def vpn_configure(config,source):
     return result
 
 PHRASE_LABELS={'open':'Открыть','close':'Выйти','new':'Новый чат','previous':'Предыдущий чат',
-               'ask':'Спросить у чата','ask_gpt':'Спросить у джипити','ask_chatgpt':'Спросить у чатджипити'}
+               'ask':'Спросить (варианты через запятую)'}
 
 def phrase_fields(mode):
-    keys=('open','close','new','previous')+(ASK_PHRASE_KEYS if mode=='native' else ())
+    keys=('open','close','new','previous')+(('ask',) if mode=='native' else ())
     return [(key,PHRASE_LABELS[key]) for key in keys]
+
+def phrase_text(key,value):
+    return ', '.join(value) if isinstance(value,list) else value
+
+def phrase_note(title,value):
+    if isinstance(value,list):return title+': '+', '.join('«Алиса, '+text+'»' for text in value)
+    return title+': «Алиса, '+value+'»'
 
 def settings(config,apply=True,fields=('phrases','led')):
     previous=copy.deepcopy(config)
     if 'phrases' in fields:
         ui.note('Фразы после обращения «Алиса».')
         if config['mode']=='native':
-            ui.note('Три фразы «спроси…» — варианты одного действия; вопрос добавляется после фразы.')
+            ui.note('Для вопроса можно перечислить несколько вариантов через запятую; вопрос добавляется после фразы.')
         for key,title in phrase_fields(config['mode']):
-            config['phrases'][key]=ui.text(title,config['phrases'].get(key,DEFAULT_PHRASES[key]))
+            current=config['phrases'].get(key,DEFAULT_PHRASES[key])
+            value=ui.text(title,phrase_text(key,current))
+            config['phrases'][key]=parse_phrase_list(value) if key==ASK_KEY else value
     if 'led' in fields:
         from . import lighting
         config['led']=lighting.choose(config)
@@ -240,8 +249,7 @@ def installation_options(config,network_result):
         if config['autostart'] and not vpn_auto:ui.note('GPT при загрузке запустится только при уже работающем VLESS.')
     ui.note('Голосовые фразы','bold')
     for key,title in phrase_fields(config['mode']):
-        ui.note(title+': «Алиса, '+config['phrases'].get(key,DEFAULT_PHRASES[key])+'»'+
-                (' …' if key in ASK_PHRASE_KEYS else ''))
+        ui.note(phrase_note(title,config['phrases'].get(key,DEFAULT_PHRASES[key])))
     if ui.select('Оставить эти фразы или изменить?', [('Оставить указанные фразы','keep'),('Изменить фразы','change')],default='keep')=='change':
         settings(config,apply=False,fields=('phrases',))
     ui.note('Подсветка GPT','bold')
@@ -325,7 +333,7 @@ def _main(argv=None):
     parser=argparse.ArgumentParser(prog='alisa',description='Лайт 1/2, Мини 2/3, Станция 2 и экспериментальная Миди: нативный GPT. Мост — Linux, Лайт 2 и Мини 2.')
     parser.add_argument('--version',action='version',version=__version__)
     parser.add_argument('mode',nargs='?',choices=MODES)
-    parser.add_argument('action',nargs='?',choices=['install','update','devices','start','run','stop','toggle','status','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
+    parser.add_argument('action',nargs='?',choices=['install','update','devices','start','run','stop','toggle','status','url','doctor','network','settings','autostart','login','logout','verify','vpn','ssh','voice','storage','uninstall','help'])
     parser.add_argument('operation',nargs='?')
     parser.add_argument('--host');parser.add_argument('--port',type=int);parser.add_argument('--user');parser.add_argument('--identity')
     parser.add_argument('--dry-run',action='store_true');parser.add_argument('--yes',action='store_true');parser.add_argument('--no-start',action='store_true')
@@ -405,6 +413,11 @@ def _main(argv=None):
             s=runtime.status(config)
             if s.get('error'):s['error_message']=friendly(s['error'])
             show(s)
+        elif action=='url':
+            if mode!='native':raise ValueError('Веб-панель доступна в нативном режиме')
+            result=runtime.native_action(config,'url')
+            show({'web_panel':'http://'+config['host']+':'+str(result.get('port',18080))+'/',
+                  'pairing_code':str(result.get('pairing_code',''))})
         elif action=='doctor':show(doctor.inspect(config))
         elif action=='network':show(network.check(config))
         elif action=='storage':

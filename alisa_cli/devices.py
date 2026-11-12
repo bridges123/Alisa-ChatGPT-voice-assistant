@@ -147,5 +147,5 @@ def component_note(config):
 
 def require_current(config,action):
     if config['mode']=='native' and needs_update(config) and action not in (
-            'install','devices','status','doctor','storage','network','stop','help','uninstall','update'):
+            'install','devices','status','url','doctor','storage','network','stop','help','uninstall','update'):
         raise RuntimeError('Компоненты выбранной колонки отличаются от программы. Выберите «Установка и обслуживание → Обновить компоненты колонки». Другие колонки не изменятся.')

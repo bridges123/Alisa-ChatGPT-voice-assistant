@@ -34,22 +34,21 @@ class InstallationFlow(unittest.TestCase):
         self.assertEqual(value['led'],'red');self.assertEqual(value['phrases']['open'],'открой разговор')
         secret.assert_not_called();servers.assert_not_called()
 
-    def test_native_wizard_shows_all_three_ask_aliases(self):
+    def test_native_wizard_shows_every_ask_variant(self):
         value=config();notes=[]
         with patch.object(ui,'select',side_effect=lambda title,items,default=None:default),patch.object(ui,'confirm',return_value=False),patch.object(ui,'note',side_effect=lambda text,*args:notes.append(text)),patch.object(ui,'secret') as secret:
             cli.installation_options(value,{'country':'DE'})
-        self.assertTrue(any('спроси у чата' in note for note in notes))
-        self.assertTrue(any('спроси у джипити' in note for note in notes))
-        self.assertTrue(any('спроси у чатджипити' in note for note in notes))
+        summary='\n'.join(notes)
+        for phrase in ('спроси у чата','спроси нейросеть','спроси чатик','спроси у нейросети',
+                       'спроси чат','спроси у джипити','спроси чатджипити','спроси у чатджипити'):
+            self.assertIn(phrase,summary)
         secret.assert_not_called()
 
-    def test_native_wizard_counts_three_ask_phrase_edits(self):
-        value=config();answers=iter(['спроси у чата','спроси у джипити','спроси у чатджипити'])
-        with patch.object(ui,'select',side_effect=lambda title,items,default=None:'change' if 'фразы' in title else default),patch.object(ui,'text',side_effect=lambda title,default:next(answers) if 'Спросить' in title else default),patch.object(ui,'confirm',return_value=False),patch.object(ui,'note'):
+    def test_native_wizard_edits_ask_variants_as_one_field(self):
+        value=config();answer='спроси у чата, спроси чатик'
+        with patch.object(ui,'select',side_effect=lambda title,items,default=None:'change' if 'фразы' in title else default),patch.object(ui,'text',side_effect=lambda title,default:answer if 'Спросить' in title else default),patch.object(ui,'confirm',return_value=False),patch.object(ui,'note'):
             cli.installation_options(value,{'country':'DE'})
-        self.assertEqual(value['phrases']['ask'],'спроси у чата')
-        self.assertEqual(value['phrases']['ask_gpt'],'спроси у джипити')
-        self.assertEqual(value['phrases']['ask_chatgpt'],'спроси у чатджипити')
+        self.assertEqual(value['phrases']['ask'],['спроси у чата','спроси чатик'])
 
     def test_wizard_preserves_saved_vpn_and_counts_its_engine(self):
         value=config();value['vpn'].update(enabled=True,engine='xray')
