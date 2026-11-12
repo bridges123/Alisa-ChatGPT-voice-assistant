@@ -7,9 +7,10 @@ struct OneShotAnswer {
     double silence_seconds=0;
 };
 // A spoken answer must actually be heard, be longer than the opening cue and
-// be followed by a pause. An answer still arriving is never cut at 2 seconds.
-inline bool one_shot_complete(const OneShotAnswer &answer){
-    return answer.asked&&answer.heard&&answer.audible_blocks>8&&answer.silence_seconds>=2.0;
+// be followed by a pause. The pause is a parameter because a "thinking"
+// filler needs more room than a normal end of answer.
+inline bool one_shot_complete(const OneShotAnswer &answer,double silence_seconds=2.0){
+    return answer.asked&&answer.heard&&answer.audible_blocks>8&&answer.silence_seconds>=silence_seconds;
 }
 // Bound the whole call so a silent server cannot hold the station forever.
 inline bool one_shot_timeout(double since_asked_seconds){

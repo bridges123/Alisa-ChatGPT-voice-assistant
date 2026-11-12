@@ -56,6 +56,10 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
     std::atomic<bool> stop_requested{false},gathered{false},channel_open{false},failed{false};
     std::atomic<bool> assistant_seen{false},probe_reply_match{false};
     std::atomic<bool> is_speaking{false};
+    // The voice backend announces its own thinking phase. A spoken filler
+    // such as "Сейчас подумаю" must not be mistaken for the answer.
+    std::atomic<bool> thinking{false};
+    std::atomic<unsigned int> thinking_events{0};
     std::atomic<bool> flush_output{false};
     std::map<std::string,unsigned int> event_types;
     std::string caption_role,probe_caption;
@@ -135,6 +139,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 if(event_types.size()<64)++event_types[kind];
+                if(kind=="thinking_update"){thinking=true;++thinking_events;}
                 if(server_state.receive(kind,payload)){
                     failed=true;changed.notify_all();return;
                 }
@@ -412,6 +417,7 @@ public:
         auto start=Clock::now(),tick=start;
         const bool one_shot=!options.ask_text.empty();
         bool probe_asked=false,ask_sent=false,ask_timeout=false;Clock::time_point asked_at{};
+        const char *completion="unknown";
         bool starving=false;
 #ifndef ALISA_USE_NETEQ
         SpeechTempo tempo;bool tail_flushed=false;
@@ -525,7 +531,7 @@ public:
             if(sound)++nonzero;
             int peak=0;long long power=0;
             for(short value:samples){peak=std::max(peak,std::abs(int(value)));power+=int(value)*int(value);}
-            if(power>1920LL*128*128){last_speech=Clock::now();++audible_blocks;}
+            if(power>1920LL*128*128){last_speech=Clock::now();++audible_blocks;thinking=false;}
             is_speaking=last_speech!=Clock::time_point::min()&&Clock::now()-last_speech<std::chrono::milliseconds(250);
             silence=peak?0:silence+1;if(silence>=6)gain=1.995262f;
             float wanted=peak?std::min(1.995262f,31128.0f/peak):1.995262f;
@@ -547,8 +553,11 @@ public:
                 answer.asked=true;answer.heard=last_speech!=Clock::time_point::min();
                 answer.audible_blocks=audible_blocks.load();
                 if(answer.heard)answer.silence_seconds=std::chrono::duration<double>(Clock::now()-last_speech).count();
-                if(one_shot_complete(answer))break;
-                if(one_shot_timeout(std::chrono::duration<double>(Clock::now()-asked_at).count())){ask_timeout=true;break;}
+                // While the backend says it is thinking, the filler is not the
+                // answer. Without any thinking event use a longer fallback.
+                const double pause=thinking_events.load()?2.5:4.0;
+                if(one_shot_complete(answer,pause)&&!thinking.load()){completion="silence";break;}
+                if(one_shot_timeout(std::chrono::duration<double>(Clock::now()-asked_at).count())){ask_timeout=true;completion="timeout";break;}
             }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
         }
@@ -557,8 +566,11 @@ public:
         if(one_shot){
             // A user-requested close is not a failed question.
             const bool cancelled=stop_requested.load()||stopping.load();
+            if(cancelled)completion="cancelled";
             result["one_shot"]=true;result["answer_complete"]=answered&&!ask_timeout;
             result["success"]=answered&&!ask_timeout;
+            result["completion_reason"]=completion;
+            result["thinking_events"]=thinking_events.load();
             if(ask_timeout)result["error"]="ask_no_answer";
             else if(!answered&&!cancelled)result["error"]=ask_sent?"ask_no_answer":"ask_relay_failed";
         }else result["success"]=!failed&&audible_blocks>8&&assistant_seen;

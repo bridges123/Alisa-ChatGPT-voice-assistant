@@ -23,5 +23,10 @@ int main(){
     OneShotAnswer early;
     early.asked=true;early.heard=true;early.audible_blocks=30;early.silence_seconds=0.2;
     assert(!one_shot_complete(early));
-    std::printf("one-shot completion and timeout: passed\n");
+    // A thinking filler needs a longer pause than a normal end of answer.
+    OneShotAnswer filler;
+    filler.asked=true;filler.heard=true;filler.audible_blocks=75;filler.silence_seconds=2.4;
+    assert(one_shot_complete(filler));
+    assert(!one_shot_complete(filler,4.0));
+    std::printf("one-shot completion, pause and timeout: passed\n");
 }
