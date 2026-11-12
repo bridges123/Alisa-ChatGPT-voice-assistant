@@ -12,7 +12,11 @@ STYLE_NAMES={'rainbow':'Радуга','red':'Красный','blue':'Синий'
 LED_SCOPES=('speaking','active')
 LED_SCOPE_NAMES={'speaking':'Только во время ответа','active':'Во время ответа и прослушивания'}
 VOICES=('breeze','cove','ember','fathom','glimmer','juniper','maple','orbit','vale')
-DEFAULT_PHRASES={'open':'открой чат','close':'закрой чат','new':'создай новый чат','previous':'открой предыдущий чат'}
+DEFAULT_PHRASES={'open':'открой чат','close':'закрой чат','new':'создай новый чат','previous':'открой предыдущий чат',
+                 'ask':'спроси у чата','ask_gpt':'спроси у джипити','ask_chatgpt':'спроси у чатджипити'}
+# Action 5 is a prefix: the question follows the configured phrase.
+PHRASE_ORDER=(('open',1),('new',2),('close',3),('previous',4),('ask',5),('ask_gpt',5),('ask_chatgpt',5))
+ASK_PHRASE_KEYS=('ask','ask_gpt','ask_chatgpt')
 
 def write_private(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -37,7 +41,13 @@ def defaults(mode):
 def load(mode):
     p=HOME/mode/'config.json'
     if not p.exists():return defaults(mode)
-    value=json.loads(p.read_text(encoding='utf-8'));value.setdefault('listen_led',False);value.setdefault('led_scope','speaking');validate(value);return value
+    value=json.loads(p.read_text(encoding='utf-8'));value.setdefault('listen_led',False);value.setdefault('led_scope','speaking')
+    phrases=value.get('phrases')
+    if not isinstance(phrases,dict):phrases=value['phrases']={}
+    for key,text in DEFAULT_PHRASES.items():
+        # Never shadow a phrase the user already assigned to another action.
+        if key not in phrases and text not in phrases.values():phrases[key]=text
+    validate(value);return value
 
 def save(value):
     validate(value);write_private(HOME/value['mode']/'config.json',value)
@@ -52,9 +62,9 @@ def normalize_phrase(value):
     return value
 
 def command_file(phrases):
-    values={k:normalize_phrase(v) for k,v in phrases.items()}
+    values={k:normalize_phrase(v) for k,v in (phrases or {}).items()}
     if len(set(values.values()))!=len(values):raise ValueError('Фразы действий должны отличаться')
-    return ''.join(f'{number}\t{values[key]}\n' for key,number in [('open',1),('new',2),('close',3),('previous',4)]).encode()
+    return ''.join(f'{number}\t{values[key]}\n' for key,number in PHRASE_ORDER if key in values).encode()
 
 def validate(value):
     if 'password' in value:raise ValueError('Пароль SSH не сохраняется в настройках')

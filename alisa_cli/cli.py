@@ -1,5 +1,5 @@
 import argparse,copy,json,subprocess,sys,time
-from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate
+from .state import ROOT,MODES,STYLES,STYLE_NAMES,LED_SCOPES,VOICES,load,save,validate,DEFAULT_PHRASES,ASK_PHRASE_KEYS
 from . import doctor,network,runtime,autostart,accounts,vpn
 from . import ui,ssh_setup
 from . import __version__,updates
@@ -69,12 +69,21 @@ def vpn_configure(config,source):
     result['autostart']=enabled
     return result
 
+PHRASE_LABELS={'open':'Открыть','close':'Выйти','new':'Новый чат','previous':'Предыдущий чат',
+               'ask':'Спросить у чата','ask_gpt':'Спросить у джипити','ask_chatgpt':'Спросить у чатджипити'}
+
+def phrase_fields(mode):
+    keys=('open','close','new','previous')+(ASK_PHRASE_KEYS if mode=='native' else ())
+    return [(key,PHRASE_LABELS[key]) for key in keys]
+
 def settings(config,apply=True,fields=('phrases','led')):
     previous=copy.deepcopy(config)
     if 'phrases' in fields:
         ui.note('Фразы после обращения «Алиса».')
-        for key,title in [('open','Открыть'),('close','Выйти'),('new','Новый чат'),('previous','Предыдущий чат')]:
-            config['phrases'][key]=ui.text(title,config['phrases'][key])
+        if config['mode']=='native':
+            ui.note('Три фразы «спроси…» — варианты одного действия; вопрос добавляется после фразы.')
+        for key,title in phrase_fields(config['mode']):
+            config['phrases'][key]=ui.text(title,config['phrases'].get(key,DEFAULT_PHRASES[key]))
     if 'led' in fields:
         from . import lighting
         config['led']=lighting.choose(config)
@@ -226,8 +235,9 @@ def installation_options(config,network_result):
         vpn_auto=yes('Запускать VLESS при включении колонки?',config['vpn'].get('autostart',False) or config['autostart'])
         if config['autostart'] and not vpn_auto:ui.note('GPT при загрузке запустится только при уже работающем VLESS.')
     ui.note('Голосовые фразы','bold')
-    for key,title in [('open','Открыть'),('close','Выйти'),('new','Новый чат'),('previous','Предыдущий чат')]:
-        ui.note(title+': «Алиса, '+config['phrases'][key]+'»')
+    for key,title in phrase_fields(config['mode']):
+        ui.note(title+': «Алиса, '+config['phrases'].get(key,DEFAULT_PHRASES[key])+'»'+
+                (' …' if key in ASK_PHRASE_KEYS else ''))
     if ui.select('Оставить эти фразы или изменить?', [('Оставить указанные фразы','keep'),('Изменить фразы','change')],default='keep')=='change':
         settings(config,apply=False,fields=('phrases',))
     ui.note('Подсветка GPT','bold')

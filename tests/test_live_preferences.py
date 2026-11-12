@@ -14,6 +14,16 @@ class LivePreferences(unittest.TestCase):
    cli.settings(c,fields=('phrases',))
   save.assert_not_called();update.assert_not_called()
 
+ def test_phrase_editor_offers_ask_aliases_only_for_native(self):
+  for mode,expected in [('native',3),('bridge',0)]:
+   c=config(mode);seen=[]
+   with patch.object(ui,'text',side_effect=lambda title,default:seen.append(title) or default),patch.object(ui,'note'):
+    cli.settings(c,apply=False,fields=('phrases',))
+   self.assertEqual(sum('Спросить' in title for title in seen),expected)
+   self.assertEqual(c['phrases']['ask'],'спроси у чата')
+   self.assertEqual(c['phrases']['ask_gpt'],'спроси у джипити')
+   self.assertEqual(c['phrases']['ask_chatgpt'],'спроси у чатджипити')
+
  def test_phrases_apply_without_checking_or_restarting_active_audio(self):
   c=config();old=copy.deepcopy(c);c['phrases']['open']='поговорим с гпт'
   with patch.object(runtime,'Station') as station,patch.object(runtime,'status') as status,patch.object(runtime,'start') as start,patch.object(runtime,'stop') as stop:

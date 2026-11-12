@@ -34,6 +34,23 @@ class InstallationFlow(unittest.TestCase):
         self.assertEqual(value['led'],'red');self.assertEqual(value['phrases']['open'],'открой разговор')
         secret.assert_not_called();servers.assert_not_called()
 
+    def test_native_wizard_shows_all_three_ask_aliases(self):
+        value=config();notes=[]
+        with patch.object(ui,'select',side_effect=lambda title,items,default=None:default),patch.object(ui,'confirm',return_value=False),patch.object(ui,'note',side_effect=lambda text,*args:notes.append(text)),patch.object(ui,'secret') as secret:
+            cli.installation_options(value,{'country':'DE'})
+        self.assertTrue(any('спроси у чата' in note for note in notes))
+        self.assertTrue(any('спроси у джипити' in note for note in notes))
+        self.assertTrue(any('спроси у чатджипити' in note for note in notes))
+        secret.assert_not_called()
+
+    def test_native_wizard_counts_three_ask_phrase_edits(self):
+        value=config();answers=iter(['спроси у чата','спроси у джипити','спроси у чатджипити'])
+        with patch.object(ui,'select',side_effect=lambda title,items,default=None:'change' if 'фразы' in title else default),patch.object(ui,'text',side_effect=lambda title,default:next(answers) if 'Спросить' in title else default),patch.object(ui,'confirm',return_value=False),patch.object(ui,'note'):
+            cli.installation_options(value,{'country':'DE'})
+        self.assertEqual(value['phrases']['ask'],'спроси у чата')
+        self.assertEqual(value['phrases']['ask_gpt'],'спроси у джипити')
+        self.assertEqual(value['phrases']['ask_chatgpt'],'спроси у чатджипити')
+
     def test_wizard_preserves_saved_vpn_and_counts_its_engine(self):
         value=config();value['vpn'].update(enabled=True,engine='xray')
         report={'ok':True,'host_missing':[]}
