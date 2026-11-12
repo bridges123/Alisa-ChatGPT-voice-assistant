@@ -73,6 +73,31 @@ class FirmwarePolicy(unittest.TestCase):
                 report=firmware.classify('yandex,prune',pair)
                 self.assertFalse(report['firmware_files_present']);self.assertEqual(report['warnings'],[])
 
+    def test_components_update_does_not_require_browser_or_xvfb(self):
+        config=state.defaults('native');config['host']='192.0.2.44'
+        response='\n'.join(['0','aarch64','yandex,prune\0amlogic,axg\0',
+            ISSUE_PAIR[0]+'  /system/vendor/quasar/maind',ISSUE_PAIR[1]+'  /system/vendor/quasar/libs/libyandex_evil.so',
+            '/dev/ubi1_0 89568 19408 65548 23% /data',
+            '/bin/aplay','/bin/base64','/bin/sha256sum','/bin/socat'])
+        def which(tool):return None if tool in ('chromium','Xvfb','xauth') else '/bin/'+tool
+        with patch.object(doctor,'login_missing',return_value=['Xvfb','xauth']), \
+             patch.object(doctor.Station,'text',return_value=response),patch.object(doctor.shutil,'which',side_effect=which):
+            full=doctor.inspect(config)
+            components=doctor.inspect(config,login_tools=False)
+        self.assertIn('chromium',full['host_missing']);self.assertIn('Xvfb',full['host_missing'])
+        self.assertEqual(components['host_missing'],[]);self.assertTrue(components['ok'])
+        doctor.require(config,components,login_tools=False,warn=False)
+        with self.assertRaises(RuntimeError):doctor.require(config,full)
+
+    def test_component_install_preflight_skips_login_tools(self):
+        config,report=self.report()
+        with patch.object(install,'require',return_value=report) as require, \
+             patch.object(install,'Station'),patch.object(install,'native_files',return_value={}), \
+             patch.object(storage,'report',return_value={'enough':True}):
+            result=install.install(config,dry_run=True,components=True)
+        require.assert_called_once_with(config,login_tools=False)
+        self.assertTrue(result['dry_run'])
+
     def test_unverified_native_dry_run_reaches_preflight_without_writes(self):
         config,report=self.report()
         with patch.object(doctor,'inspect',return_value=report),patch.object(install,'Station') as station, \

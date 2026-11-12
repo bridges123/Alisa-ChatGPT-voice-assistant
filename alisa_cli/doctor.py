@@ -8,7 +8,7 @@ def windows_chromium():
     from .windows import browser
     return browser()
 
-def inspect(config):
+def inspect(config,login_tools=True):
     s=Station(config)
     script='id -u; uname -m; cat /proc/device-tree/compatible; printf "\\n"; sha256sum /system/vendor/quasar/maind /system/vendor/quasar/libs/libyandex_evil.so; df -Pk /data; for x in aplay base64 sha256sum ip; do command -v "$x" || true; done; command -v socat || command -v /data/opt/entware/bin/socat || true; printf "ALISA_FIRMWARE_VERSION="; head -c 256 /system/vendor/quasar/version_full 2>/dev/null || true'
     lines=s.text(script).replace('\x00',' ').splitlines()
@@ -20,11 +20,15 @@ def inspect(config):
     firmware=classify(device_tree,pair)
     model=firmware['model'];compatible=model is not None
     mode_supported=compatible and (config['mode']=='native' or model in ('lite2','mini2'))
-    missing=[tool for tool in ['ssh','chromium'] if not shutil.which(tool)]
-    missing+=login_missing()
+    missing=[tool for tool in ['ssh'] if not shutil.which(tool)]
+    if login_tools:
+        if not shutil.which('chromium'):missing.append('chromium')
+        missing+=login_missing()
     if sys.platform=='win32':
         from .windows import missing as windows_missing
-        missing=windows_missing()
+        # Updating station components never opens a browser; the SSH channel
+        # is prepared separately by the CLI before this check.
+        missing=windows_missing() if login_tools else []
     if config['mode']=='bridge':
         for tool in ['pactl','pacat','paplay']:
             if not shutil.which(tool):missing.append(tool)
@@ -45,8 +49,8 @@ def inspect(config):
         'free_data_kib':available,'host_missing':missing,'station_missing':missing_remote,
         'ok':root and compatible and mode_supported and firmware['firmware_files_present'] and lines[1].strip() in ARCHITECTURES and available is not None and available>12000 and not missing and not missing_remote}
 
-def require(config,report=None,warn=True):
-    report=report if report is not None else inspect(config)
+def require(config,report=None,warn=True,login_tools=True):
+    report=report if report is not None else inspect(config,login_tools=login_tools)
     reasons=[]
     if not report['root']:reasons.append('нужны права root по SSH')
     if not report['plum']:reasons.append('устройство не распознано как Станция Лайт 1, Лайт 2, Мини 2, Мини 3, Станция 2 или экспериментальная Станция Миди')
@@ -57,7 +61,7 @@ def require(config,report=None,warn=True):
     if report['host_missing']:reasons.append('на компьютере не хватает: '+', '.join(report['host_missing']))
     if report['station_missing']:reasons.append('на колонке не хватает: '+', '.join(report['station_missing']))
     if not report['ok'] and not reasons:reasons.append('не пройдена обязательная проверка компонентов')
-    if len(reasons)==1 and report['host_missing'] and set(report['host_missing'])<= {'Xvfb','xauth'}:
+    if login_tools and len(reasons)==1 and report['host_missing'] and set(report['host_missing'])<= {'Xvfb','xauth'}:
         # Keep the new dependency diagnosis visible through the updater's
         # fixed public-error channel, before it stops or replaces anything.
         from .errors import PublicError

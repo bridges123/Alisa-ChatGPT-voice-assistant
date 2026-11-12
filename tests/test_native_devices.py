@@ -186,7 +186,7 @@ print(json.dumps({'home':str(state.HOME),'account_home':str(accounts.HOME),'ssh_
             with patch.object(cli,'load',return_value=self.config),patch.object(runtime,'status',return_value={'phase':'idle','agent_connected':connected}),\
                  patch.object(install,'install',return_value={}) as update,patch.object(cli,'show'):
                 self.assertEqual(cli.main(['native','install','components']),0)
-            update.assert_called_once_with(self.config,activate=connected)
+            update.assert_called_once_with(self.config,activate=connected,components=True)
         with patch.object(cli,'load',return_value=self.config),patch.object(runtime,'status',return_value={'phase':'active'}),\
              patch.object(install,'install') as update,patch.object(ui,'note'):
             self.assertEqual(cli.main(['native','install','components']),1)

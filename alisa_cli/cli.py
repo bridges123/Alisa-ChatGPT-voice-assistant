@@ -401,7 +401,7 @@ def _main(argv=None):
                 if current.get('phase') in ('active','answering','connecting','opening','starting','stopping'):
                     raise RuntimeError('Сначала закройте голосовой чат выбранной колонки.')
                 from .install import install
-                show(install(config,activate=bool(current.get('agent_connected'))))
+                show(install(config,activate=bool(current.get('agent_connected')),components=True))
             elif args.dry_run or args.yes:
                 from .install import install
                 show(install(config,activate=not args.no_start,dry_run=args.dry_run))

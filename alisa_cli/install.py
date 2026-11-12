@@ -33,8 +33,10 @@ def native_files(station,model=None):
     for name in ['vpn.sh','boot.sh','native-call.sh']:files[TOOLS+'/'+name]=(ROOT/'station'/name).read_bytes()
     return files
 
-def install(config,activate=True,dry_run=False):
-    with ui.activity('Проверяю колонку и компоненты'):preflight=require(config)
+def install(config,activate=True,dry_run=False,components=False):
+    # Updating station components never opens a browser or Xvfb: those are
+    # needed only for the one-time ChatGPT login on the computer.
+    with ui.activity('Проверяю колонку и компоненты'):preflight=require(config,login_tools=not components)
     if not dry_run:
         from .firmware import apply_model
         apply_model(config,preflight.get('model'))
