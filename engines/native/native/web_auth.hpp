@@ -91,13 +91,15 @@ inline HttpReply web_request(const std::string &url,const json &auth,
     return reply;
 }
 
-// Remove a conversation created by a one-shot question. A short timeout keeps
-// Alice's return prompt; any failure is reported, never fatal.
+// Hide a conversation created by a one-shot question. ChatGPT's web client
+// deletes a chat with PATCH {"is_visible": false}, not DELETE (405). A short
+// timeout keeps Alice's return prompt; any failure is reported, never fatal.
 inline long delete_conversation(const json &auth,const std::string &id,
                                 std::atomic<bool> *cancel=nullptr) {
     if(id.empty()||id.size()>128||id.find_first_not_of("0123456789abcdef-")!=std::string::npos)return -1;
     try{
-        auto reply=web_request("https://chatgpt.com/backend-api/conversation/"+id,auth,{},{},cancel,"DELETE",10);
+        auto reply=web_request("https://chatgpt.com/backend-api/conversation/"+id,auth,
+                               R"({"is_visible":false})","application/json",cancel,"PATCH",10);
         return reply.status;
     }catch(const std::exception &){return -1;}
 }
