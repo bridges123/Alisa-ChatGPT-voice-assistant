@@ -156,7 +156,7 @@ public:
         info["agent_connected"]=test_mode||(agent&&agent->connected());
         if(agent){
             std::lock_guard<std::mutex> lock(agent->metadata_mutex);info["native"]=json::object();
-            for(const char *key:{"mode","focus_ready","native_state","commands","recognition_starts","wake_blocks","wire_format"})
+            for(const char *key:{"mode","focus_ready","native_state","commands","ask_requests","recognition_starts","wake_blocks","wire_format"})
                 if(agent->metadata.contains(key))info["native"][key]=agent->metadata[key];
         }
         info["login_saved"]=fs::exists(state/"web-session.json");
