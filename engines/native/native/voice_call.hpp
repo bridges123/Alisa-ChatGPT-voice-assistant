@@ -554,9 +554,8 @@ public:
                 answer.audible_blocks=audible_blocks.load();
                 if(answer.heard)answer.silence_seconds=std::chrono::duration<double>(Clock::now()-last_speech).count();
                 // While the backend says it is thinking, the filler is not the
-                // answer. Without any thinking event use a longer fallback.
-                const double pause=thinking_events.load()?2.5:4.0;
-                if(one_shot_complete(answer,pause)&&!thinking.load()){completion="silence";break;}
+                // answer. A one-shot keeps a full pause before returning Alice.
+                if(one_shot_complete(answer,4.0)&&!thinking.load()){completion="silence";break;}
                 if(one_shot_timeout(std::chrono::duration<double>(Clock::now()-asked_at).count())){ask_timeout=true;completion="timeout";break;}
             }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
@@ -574,12 +573,24 @@ public:
             if(ask_timeout)result["error"]="ask_no_answer";
             else if(!answered&&!cancelled)result["error"]=ask_sent?"ask_no_answer":"ask_relay_failed";
         }else result["success"]=!failed&&audible_blocks>8&&assistant_seen;
+        std::string conversation;
         {std::lock_guard<std::mutex> lock(mutex);result["identity"]=identity;
+            if(identity.contains("conversation_id")&&identity["conversation_id"].is_string())
+                conversation=identity["conversation_id"].get<std::string>();
             // A goodbye after a spoken one-shot answer is not a failure: the
             // user already heard the answer and Alice is being returned.
             if(!server_state.error.empty()&&!(one_shot&&answered))result["error"]=server_state.error;
             if(options.probe)result["synthetic_caption"]=probe_caption;}
-        stop();pc->close();return result;
+        stop();pc->close();
+        // A one-shot must not clutter the account history. Delete the
+        // conversation it created; a failure never blocks Alice's return.
+        if(one_shot){
+            long status=-1;
+            if(answered&&!ask_timeout&&!conversation.empty())status=delete_conversation(auth,conversation);
+            result["history_delete_status"]=status;
+            result["history_deleted"]=status==200||status==204;
+        }
+        return result;
     }
     ~VoiceCall(){stop();if(pc)pc->close();}
 };

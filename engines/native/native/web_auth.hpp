@@ -39,7 +39,8 @@ inline size_t http_body(char *p,size_t size,size_t count,void *opaque) {
 }
 inline HttpReply web_request(const std::string &url,const json &auth,
                             const std::string &body={},const std::string &content_type={},
-                            std::atomic<bool> *cancel=nullptr) {
+                            std::atomic<bool> *cancel=nullptr,const char *method=nullptr,
+                            long timeout_seconds=40) {
     if(url.rfind("https://chatgpt.com/",0)!=0)throw std::runtime_error("invalid_upstream");
     CURL *curl=curl_easy_init();if(!curl)throw std::runtime_error("http_init_failed");
     HttpReply reply;curl_slist *headers=nullptr;
@@ -57,8 +58,9 @@ inline HttpReply web_request(const std::string &url,const json &auth,
     curl_easy_setopt(curl,CURLOPT_COOKIE,cookies.c_str());
     curl_easy_setopt(curl,CURLOPT_COOKIEFILE,"");
     curl_easy_setopt(curl,CURLOPT_USERAGENT,auth.value("user_agent",std::string("AlisaStandalone/0.1")).c_str());
-    curl_easy_setopt(curl,CURLOPT_TIMEOUT,40L);curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,8L);
+    curl_easy_setopt(curl,CURLOPT_TIMEOUT,timeout_seconds);curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,8L);
     curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);
+    if(method)curl_easy_setopt(curl,CURLOPT_CUSTOMREQUEST,method);
     if(const char *proxy=getenv("ALISA_PROXY_URL"))curl_easy_setopt(curl,CURLOPT_PROXY,proxy);
     configure_ca(curl);
     curl_easy_setopt(curl,CURLOPT_WRITEFUNCTION,http_body);
@@ -87,6 +89,17 @@ inline HttpReply web_request(const std::string &url,const json &auth,
     curl_slist_free_all(list);curl_slist_free_all(headers);curl_easy_cleanup(curl);
     if(result!=CURLE_OK)throw std::runtime_error("https_transport_"+std::to_string(result));
     return reply;
+}
+
+// Remove a conversation created by a one-shot question. A short timeout keeps
+// Alice's return prompt; any failure is reported, never fatal.
+inline long delete_conversation(const json &auth,const std::string &id,
+                                std::atomic<bool> *cancel=nullptr) {
+    if(id.empty()||id.size()>128||id.find_first_not_of("0123456789abcdef-")!=std::string::npos)return -1;
+    try{
+        auto reply=web_request("https://chatgpt.com/backend-api/conversation/"+id,auth,{},{},cancel,"DELETE",10);
+        return reply.status;
+    }catch(const std::exception &){return -1;}
 }
 
 inline json refresh_web_auth(const fs::path &file,std::atomic<bool> *cancel=nullptr) {
