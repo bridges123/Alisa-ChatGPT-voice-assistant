@@ -22,7 +22,7 @@ ARM-модули моста собираются командой `python3 engin
 
 ## Исходники зависимостей
 
-Рядом с бинарным пакетом в [релизе v0.2.0](https://github.com/rison1337/Alisa-ChatGPT-voice-assistant/releases/tag/v0.2.0) опубликован архив `alisa-voice-sources.tar.gz`. Он содержит исходники нативных зависимостей с submodules, sing-box/Xray с `vendor/`, лицензии и метаданные. Точные коммиты и SHA-256 загрузок закреплены в [native-dependencies.json](native-dependencies.json); список исходников NetEq — в [neteq-sources.json](neteq-sources.json).
+Рядом с бинарным пакетом в [релизе v0.2.0](https://github.com/rison1337/Alisa-ChatGPT-voice-assistant/releases/tag/v0.2.0) опубликован архив `alisa-voice-sources.tar.gz`. Само приложение в него не входит: код берётся из текущей ветки или тега, а архив лишь добавляет исходники сторонних зависимостей с submodules, sing-box/Xray с `vendor/`, лицензии и метаданные. Поэтому версия рядом с архивом — это версия снимка зависимостей, а не версия программы. Точные коммиты и SHA-256 загрузок закреплены в [native-dependencies.json](native-dependencies.json); список исходников NetEq — в [neteq-sources.json](neteq-sources.json). С момента публикации эти коммиты не менялись, поэтому архив подходит и для текущей ветки.
 
 Из корня клонированного проекта:
 
