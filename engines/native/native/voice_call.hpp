@@ -324,6 +324,7 @@ public:
             {"open_cue_played",open_cue_played.load()},
             {"identity_shapes",identity_shapes},{"rss_kib",rss_kib()}};
         result["server_close"]=server_state.close;result["last_server_state"]=server_state.last_state;
+        result["history_disabled"]=!options.ask_text.empty();
         result["connection"]={{"ice_state",ice_name(ice_state.load())},{"peer_state",peer_name(peer_state.load())},
             {"gathered",gathered.load()},{"data_channel_open",channel_open.load()}};
         if(options.probe)result["rtp_timing"]=playout.timing();
@@ -367,7 +368,10 @@ public:
             {"requested_default_model",""},{"voice",options.voice},{"voice_session_id",sid},
             {"voice_status_request_id",sid},{"timezone_offset_min",-300},{"timezone","Asia/Yekaterinburg"},
             {"voice_mode","wingman"},{"model_slug",""},{"model_slug_advanced",""},
-            {"client_tools",json::array()},{"history_and_training_disabled",false},
+            {"client_tools",json::array()},
+            // A one-shot question is a temporary chat: it must not appear in
+            // the account history. Open chats keep their normal persistence.
+            {"history_and_training_disabled",!options.ask_text.empty()},
             {"conversation_mode",{{"kind","primary_assistant"}}},{"enable_message_streaming",true}};
         if(!options.conversation_id.empty())session["conversation_id"]=options.conversation_id;
         if(!options.parent_message_id.empty())session["parent_message_id"]=options.parent_message_id;
