@@ -103,7 +103,10 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
 #endif
     std::atomic<bool> open_cue_played{false};
     std::atomic<unsigned int> microphone_frames{0},microphone_nonzero{0},muted_frames{0};
-    std::atomic<unsigned int> microphone_peak{0},microphone_rms_max{0},microphone_speech_blocks{0};
+    std::atomic<unsigned int> microphone_peak{0},microphone_peak_sent{0},microphone_rms_max{0},microphone_speech_blocks{0};
+    // Applied to the microphone copy only, before Opus encoding. Alice's own
+    // recognizer keeps the untouched VQE output.
+    float microphone_gain=1.0f;
     std::map<int,unsigned int> sample_sizes;
     std::map<int,unsigned int> timestamp_steps;uint32_t last_timestamp=0;
     uint32_t source_ssrc=0;bool have_timestamp=false;
@@ -283,6 +286,12 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
     }
 public:
     explicit VoiceCall(CallOptions settings):options(std::move(settings)){
+        // Optional microphone gain for quiet rooms or distant speech. Read
+        // once; the installer exports it only when it differs from 1.
+        if(const char *text=getenv("ALISA_MIC_GAIN")){
+            char *end=nullptr;float value=std::strtof(text,&end);
+            if(end&&end!=text&&!*end&&value>=1.0f&&value<=16.0f)microphone_gain=value;
+        }
 #ifdef ALISA_USE_NETEQ
         neteq.reset(alisa_neteq_create(80,600,-1));if(!neteq)throw std::runtime_error("neteq_init_failed");
 #endif
@@ -309,6 +318,7 @@ public:
             {"audible_blocks",audible_blocks.load()},
             {"microphone_frames",microphone_frames.load()},{"microphone_nonzero",microphone_nonzero.load()},{"muted_frames",muted_frames.load()},
             {"microphone_peak",microphone_peak.load()},{"microphone_rms",microphone_rms_max.load()},
+            {"microphone_peak_sent",microphone_peak_sent.load()},{"microphone_gain",microphone_gain},
             {"microphone_speech_blocks",microphone_speech_blocks.load()},
             {"channel_open",channel_open.load()},{"assistant_text_seen",assistant_seen.load()},
             {"probe_reply_match",probe_reply_match.load()},{"event_types",event_types},
@@ -461,9 +471,9 @@ public:
                 }
                 if(!microphone_allowed){std::fill(std::begin(in),std::end(in),0);++muted_frames;}
                 else{
-                    // Diagnostics only: the same samples are still encoded and
-                    // sent unchanged. Peak/RMS show whether speech reaches the
-                    // client at a level the server's VAD can act on.
+                    // Peak/RMS describe the raw VQE copy. The optional gain is
+                    // applied only to the Opus copy sent to ChatGPT, so Alice's
+                    // own recognition keeps the untouched signal.
                     bool any=false;int peak=0;long long power=0;
                     for(short value:in){
                         if(value)any=true;
@@ -474,7 +484,18 @@ public:
                     microphone_peak=std::max(microphone_peak.load(),static_cast<unsigned int>(peak));
                     unsigned int rms=static_cast<unsigned int>(std::sqrt(static_cast<double>(power)/320.0));
                     microphone_rms_max=std::max(microphone_rms_max.load(),rms);
-                    if(peak>700)++microphone_speech_blocks;
+                    int sent_peak=peak;
+                    if(microphone_gain>1.0001f){
+                        sent_peak=0;
+                        for(short &value:in){
+                            long scaled=std::lround(value*microphone_gain);
+                            if(scaled>32767)scaled=32767;else if(scaled<-32768)scaled=-32768;
+                            value=static_cast<short>(scaled);
+                            sent_peak=std::max(sent_peak,std::abs(int(value)));
+                        }
+                    }
+                    microphone_peak_sent=std::max(microphone_peak_sent.load(),static_cast<unsigned int>(sent_peak));
+                    if(sent_peak>700)++microphone_speech_blocks;
                 }
             }
             auto encode_start=Clock::now();

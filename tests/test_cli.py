@@ -61,6 +61,15 @@ class ConfigTests(unittest.TestCase):
   p=dict(state.DEFAULT_PHRASES);p['close']=p['open']
   with self.assertRaises(ValueError):state.command_file(p)
   self.assertNotIn(b'$',state.command_file(state.DEFAULT_PHRASES))
+ def test_microphone_gain_is_exported_only_when_raised(self):
+  from alisa_cli import runtime
+  c=configured('native')
+  self.assertNotIn(b'ALISA_MIC_GAIN',runtime.native_environment(c))
+  c['mic_gain']=6
+  self.assertIn(b'export ALISA_MIC_GAIN=6.0',runtime.native_environment(c))
+  for value in (0.5,17,True,'4'):
+   bad=configured('native');bad['mic_gain']=value
+   with self.subTest(value=value),self.assertRaises(ValueError):state.validate(bad)
  def test_native_ask_passes_the_question_as_one_quoted_argument(self):
   from alisa_cli import runtime
   c=configured('native');question='что такое "сова" и зачем она'

@@ -40,7 +40,7 @@ def write_private(path,value):
 def defaults(mode):
     if mode not in MODES:raise ValueError('Выберите native или bridge')
     return {'version':1,'mode':mode,'host':'','user':'root','port':2222,'identity':None,
-        'autostart':False,'led':'rainbow','led_scope':'speaking','listen_led':False,'disable_stun':False,'display':'eyes',
+        'autostart':False,'led':'rainbow','led_scope':'speaking','listen_led':False,'disable_stun':False,'display':'eyes','mic_gain':1.0,
         'phrases':{key:(list(value) if isinstance(value,list) else value) for key,value in DEFAULT_PHRASES.items()},'installed':False,
         'vpn':{'enabled':False,'autostart':False,'required':False}}
 
@@ -117,6 +117,8 @@ def validate(value):
     if value.get('led_scope','speaking') not in LED_SCOPES:raise ValueError('Неизвестный режим подсветки')
     if not isinstance(value.get('listen_led',False),bool):raise ValueError('Подсветка в паузах должна быть включена или выключена')
     if not isinstance(value.get('disable_stun',False),bool):raise ValueError('Отключение STUN должно быть включено или выключено')
+    gain=value.get('mic_gain',1.0)
+    if isinstance(gain,bool) or not isinstance(gain,(int,float)) or not 1.0<=float(gain)<=16.0:raise ValueError('Усиление микрофона должно быть от 1 до 16')
     if not isinstance(value.get('midi_matrix',False),bool):raise ValueError('Матрица Миди должна быть включена или выключена')
     if not isinstance(value.get('midi_eyes',False),bool):raise ValueError('Глаза Миди должны быть включены или выключены')
     if not isinstance(value.get('midi_fire',False),bool):raise ValueError('Пламя Миди должно быть включено или выключено')
