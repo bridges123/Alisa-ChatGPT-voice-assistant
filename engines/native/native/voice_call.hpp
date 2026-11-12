@@ -459,7 +459,7 @@ public:
         SpeechTempo tempo;bool tail_flushed=false;
 #endif
         std::deque<short> microphone;
-        auto last_speech=Clock::time_point::min(),last_user_speech=Clock::time_point::min(),user_spoke_at=Clock::time_point::min(),mute_check=Clock::time_point::min();
+        auto last_speech=Clock::time_point::min(),last_user_speech=Clock::time_point::min(),user_spoke_at=Clock::time_point::min(),mute_check=Clock::time_point::min(),last_barge=Clock::time_point::min();
         bool assistant_after_user=true;int speech_run=0;
         float gain=1.995262f;unsigned int silence=0;
         bool microphone_allowed=false;
@@ -526,9 +526,16 @@ public:
                     // sends. Three consecutive blocks debounce short clicks.
                     unsigned int sent_rms=static_cast<unsigned int>(std::sqrt(static_cast<double>(sent_power)/320.0));
                     if(static_cast<int>(sent_rms)>=ask_vad_rms){
-                        last_user_speech=Clock::now();
+                        const auto now=Clock::now();
+                        last_user_speech=now;
                         if(speech_run<3)++speech_run;
-                        if(speech_run==3){++user_speech_events;assistant_after_user=false;user_spoke_at=Clock::now();}
+                        if(speech_run==3){++user_speech_events;assistant_after_user=false;user_spoke_at=now;}
+                        // Local barge-in: stop the current answer as soon as the
+                        // user speaks over it, without waiting for the server.
+                        if(is_speaking.load()&&(last_barge==Clock::time_point::min()||
+                           now-last_barge>std::chrono::milliseconds(500))){
+                            last_barge=now;interrupt();
+                        }
                     }else speech_run=0;
                 }
             }
@@ -642,7 +649,10 @@ public:
                 if(!thinking.load()&&(answered_turn||no_followup)){
                     completion=no_followup?"followup_no_answer":"silence";break;
                 }
-                if(one_shot_timeout(std::chrono::duration<double>(now-asked_at).count())){ask_timeout=true;completion="timeout";break;}
+                auto activity=asked_at;
+                if(last_speech>activity)activity=last_speech;
+                if(last_user_speech>activity)activity=last_user_speech;
+                if(one_shot_timeout(std::chrono::duration<double>(now-activity).count())){ask_timeout=true;completion="timeout";break;}
             }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
         }
@@ -669,10 +679,11 @@ public:
             if(options.probe)result["synthetic_caption"]=probe_caption;}
         stop();pc->close();
         // A one-shot must not clutter the account history. Delete the
-        // conversation it created; a failure never blocks Alice's return.
+        // conversation it created, even after a timeout or cancellation;
+        // a failure never blocks Alice's return.
         if(one_shot){
             long status=-1;
-            if(answered&&!ask_timeout&&!conversation.empty())status=delete_conversation(auth,conversation);
+            if(!conversation.empty())status=delete_conversation(auth,conversation);
             result["history_delete_status"]=status;
             result["history_deleted"]=status==200||status==204;
         }
