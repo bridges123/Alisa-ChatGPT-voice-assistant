@@ -10,7 +10,9 @@ static int tts_lease_refresh(const char *path) {
     if (n <= 0 || (size_t)n >= sizeof(temporary)) return 0;
     struct timespec stamp;
     if (clock_gettime(1, &stamp) < 0) return 0;
-    u64 milliseconds = (u64)stamp.sec * 1000 + (u64)stamp.nsec / 1000000;
+    /* Divide the 32-bit nanoseconds first: a 64-bit division would require
+     * __aeabi_uldivmod, which these -nostdlib preloads must not need. */
+    u64 milliseconds = (u64)stamp.sec * 1000 + (u64)(stamp.nsec / 1000000);
     n = snprintf(value, sizeof(value), "TTS1 %llu\n", milliseconds);
     if (n <= 0 || (size_t)n >= sizeof(value)) return 0;
     int fd = open(temporary, 1 | 64 | 512 | 0400000 | 02000000, 0600);

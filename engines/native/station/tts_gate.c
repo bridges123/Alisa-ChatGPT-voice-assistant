@@ -34,7 +34,8 @@ static int muted(void) {
     if (value[n - 1] != '\n') return 0;
     struct timespec now;
     if (clock_gettime(1, &now) < 0) return 0;
-    u64 current = (u64)now.sec * 1000 + (u64)now.nsec / 1000000;
+    /* 32-bit division first; a 64-bit one needs the AEABI runtime. */
+    u64 current = (u64)now.sec * 1000 + (u64)(now.nsec / 1000000);
     return current >= stamp && current - stamp < 3000;
 }
 
