@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <initializer_list>
 #include <string>
+#include "ask_policy.hpp"
 
 // Updated under VoiceCall's mutex. Retain fixed protocol codes only: server
 // detail is untrusted text and must never become a log or exception message.
@@ -43,17 +44,3 @@ struct VoiceServerState {
     }
     bool can_start_audio(bool cancelled)const{return !ended&&!cancelled;}
 };
-
-// One-shot question completion. Kept as plain values so the decision can be
-// tested without a network, audio device or account.
-struct OneShotAnswer {
-    bool asked=false,heard=false;
-    unsigned int audible_blocks=0;
-    double silence_seconds=0;
-};
-inline bool one_shot_complete(const OneShotAnswer &answer){
-    return answer.asked&&answer.heard&&answer.audible_blocks>8&&answer.silence_seconds>=2.0;
-}
-inline bool one_shot_timeout(double since_asked_seconds){
-    return since_asked_seconds>=45.0;
-}

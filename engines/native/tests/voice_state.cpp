@@ -56,28 +56,5 @@ int main(){
         assert(other.receive("goodbye",payload));
         assert(other.error=="voice_session_ended");
     }
-    // One-shot question: only stop on a real spoken answer followed by a
-    // pause. Never stop on silence alone, and never wait forever.
-    OneShotAnswer answer;
-    assert(!one_shot_complete(answer));
-    answer.asked=true;answer.audible_blocks=40;answer.silence_seconds=9;
-    assert(!one_shot_complete(answer));
-    answer.heard=true;answer.silence_seconds=1.9;
-    assert(!one_shot_complete(answer));
-    answer.silence_seconds=2.0;
-    assert(one_shot_complete(answer));
-    answer.audible_blocks=8;
-    assert(!one_shot_complete(answer));
-    answer.audible_blocks=9;answer.silence_seconds=2.4;
-    assert(one_shot_complete(answer));
-    assert(!one_shot_timeout(0));
-    assert(!one_shot_timeout(44.9));
-    assert(one_shot_timeout(45.0));
-    {
-        // A short answer that is still arriving must not be cut at 2 s.
-        OneShotAnswer early;
-        early.asked=true;early.heard=true;early.audible_blocks=30;early.silence_seconds=0.2;
-        assert(!one_shot_complete(early));
-    }
-    std::cout<<"voice close codes, terminal readiness, redaction and one-shot completion: passed\n";
+    std::cout<<"voice close codes, terminal readiness and redaction: passed\n";
 }
