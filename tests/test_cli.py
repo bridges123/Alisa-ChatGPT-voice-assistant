@@ -140,6 +140,7 @@ class NativeCommands(unittest.TestCase):
   cls.temp=tempfile.TemporaryDirectory();cls.library=Path(cls.temp.name)/'commands.so'
   subprocess.run(['cc','-shared','-fPIC','-O2',ROOT/'engines/native/station/native_agent.c','-o',cls.library],check=True)
   cls.lib=ctypes.CDLL(str(cls.library));cls.lib.alice_native_command.argtypes=[ctypes.c_char_p,ctypes.c_size_t]
+  cls.lib.alice_native_question.restype=ctypes.c_char_p
  @classmethod
  def tearDownClass(cls):cls.temp.cleanup()
  def test_custom_exact_commands_and_old_phrase_disabled(self):
@@ -151,6 +152,25 @@ class NativeCommands(unittest.TestCase):
    phrases['open']='открой разговор';p.write_bytes(state.command_file(phrases))
    for text,expected in [('поговорим с гпт',0),('открой разговор',1)]:
     raw=text.encode();self.assertEqual(self.lib.alice_native_command(raw,len(raw)),expected)
+ def test_ask_aliases_extract_question_and_bare_phrase_opens_chat(self):
+  p=Path(self.temp.name)/'commands.txt';p.write_bytes(state.command_file(state.DEFAULT_PHRASES))
+  with patch.dict(os.environ,{'ALISA_COMMANDS_FILE':str(p)}):
+   for alias in ('спроси у чата','спроси у джипити','спроси у чатджипити'):
+    raw=f'Алиса, {alias} Что такое СОВА?'.encode()
+    self.assertEqual(self.lib.alice_native_command(raw,len(raw)),5,alias)
+    self.assertEqual(self.lib.alice_native_question().decode(),'что такое сова')
+   for text in ('Алиса, спроси у чата','Алиса, спроси у джипити, пожалуйста'):
+    raw=text.encode();self.assertEqual(self.lib.alice_native_command(raw,len(raw)),1,text)
+   for text in ('не спроси у чата что такое сова','спроси у чатачто'):
+    raw=text.encode();self.assertEqual(self.lib.alice_native_command(raw,len(raw)),0,text)
+ def test_custom_ask_phrase_disables_default_alias(self):
+  p=Path(self.temp.name)/'commands.txt';phrases=dict(state.DEFAULT_PHRASES);phrases['ask']='спроси у нейросети';p.write_bytes(state.command_file(phrases))
+  with patch.dict(os.environ,{'ALISA_COMMANDS_FILE':str(p)}):
+   raw='Алиса, спроси у нейросети что такое сова'.encode()
+   self.assertEqual(self.lib.alice_native_command(raw,len(raw)),5)
+   self.assertEqual(self.lib.alice_native_question().decode(),'что такое сова')
+   raw='Алиса, спроси у чата что такое сова'.encode()
+   self.assertEqual(self.lib.alice_native_command(raw,len(raw)),0)
 
 class ShellTests(unittest.TestCase):
  def test_shell_syntax_and_persistent_blackhole(self):

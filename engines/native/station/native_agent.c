@@ -20,6 +20,7 @@ extern void *memmove(void *, const void *, size_t);
 extern int memcmp(const void *, const void *, size_t);
 extern size_t strlen(const char *);
 extern int strcmp(const char *, const char *);
+extern int strncmp(const char *, const char *, size_t);
 extern int snprintf(char *, size_t, const char *, ...);
 extern void _exit(int) __attribute__((noreturn));
 extern void (*signal(int, void (*)(int)))(int);
@@ -40,7 +41,7 @@ struct agent {
     int fd, chat, recognizing, output_active, native_state, pause_pending;
     int wire_fields;
     char listening[37], current_request[37], seen[64][37];
-    unsigned int seen_count, commands, recognition_starts, speech_stops, native_speech_events, wake_blocks;
+    unsigned int seen_count, commands, asks, recognition_starts, speech_stops, native_speech_events, wake_blocks;
     unsigned int queue_clear_requests, music_pause_requests;
     double heartbeat;
     int focus_enabled, focus_current, focus_pending, focus_owned[2], focus_ready;
@@ -208,6 +209,8 @@ static int request_music_pause(struct agent *a) {
     return pause_player(a);
 }
 
+static char ask_question[1025];
+
 #include "custom_commands.h"
 
 int alice_native_command(const unsigned char *text, size_t length) {
@@ -243,7 +246,9 @@ int alice_native_command(const unsigned char *text, size_t length) {
     if (used >= sizeof(please) - 1 && !memcmp(value + used - sizeof(please) + 1,
                                              please, sizeof(please) - 1))
         value[used - sizeof(please) + 1] = 0;
-    int custom=configured_command(value);if(custom>=0)return custom;
+    int custom=configured_command(value,ask_question,sizeof ask_question);
+    if(custom==5)return ask_question[0]?5:1;
+    if(custom>=0)return custom;
     if (!strcmp(value, "открой предыдущий чат") || !strcmp(value, "верни предыдущий чат")) return 4;
     if (!strcmp(value, "открой чат")) return 1;
     if (!strcmp(value, "создай чат") || !strcmp(value, "создай новый чат")) return 2;
@@ -252,17 +257,21 @@ int alice_native_command(const unsigned char *text, size_t length) {
     return 0;
 }
 
+const char *alice_native_question(void) {
+    return ask_question;
+}
+
 static void status(struct agent *a, const char *event) {
     char text[768];
     int n = snprintf(text, sizeof(text),
         "{\"event\":\"%s\",\"pid\":%d,\"mode\":\"%s\",\"recognition_starts\":%u,"
-        "\"commands\":%u,\"speech_stops\":%u,\"recognition_active\":%d,"
+        "\"commands\":%u,\"ask_requests\":%u,\"speech_stops\":%u,\"recognition_active\":%d,"
         "\"native_state\":%d,\"native_speech_events\":%u,\"output_active\":%d,\"wake_blocks\":%u,"
         "\"queue_clear_requests\":%u,\"music_pause_requests\":%u,\"pause_pending\":%d,\"focus_enabled\":%d,\"focus_ready\":%d,"
         "\"focus_acquires\":%u,\"focus_releases\":%u,"
         "\"focus_guard_pid\":%d,\"focus_recovering\":%d,"
         "\"focus_yields\":%u,\"focus_reacquires\":%u,\"tts_gate_enabled\":%d,\"wire_format\":\"%s\"}\n", event, getpid(),
-        a->chat ? "chat" : "idle", a->recognition_starts, a->commands, a->speech_stops,
+        a->chat ? "chat" : "idle", a->recognition_starts, a->commands, a->asks, a->speech_stops,
         a->recognizing, a->native_state, a->native_speech_events, a->output_active, a->wake_blocks,
         a->queue_clear_requests, a->music_pause_requests, a->pause_pending, a->focus_enabled, a->focus_ready,
         a->focus_acquires, a->focus_releases, a->focus_guard_pid,
@@ -458,6 +467,13 @@ static void command_event(struct agent *a, int command) {
     a->commands++;
 }
 
+static void ask_event(struct agent *a) {
+    char text[1200];
+    int n = snprintf(text, sizeof(text), "{\"event\":\"ask\",\"text\":\"%s\"}\n", ask_question);
+    if (n > 0 && (size_t)n < sizeof(text) && !output(1, text, (size_t)n)) stopping = 1;
+    a->asks++;
+}
+
 static int handle_state(struct agent *a, const unsigned char *data, size_t size) {
     struct value request, identifier, text;
     int state = (int)int_field(data, size, 1);
@@ -519,12 +535,13 @@ static int handle_state(struct agent *a, const unsigned char *data, size_t size)
     /* Every request consumed by chat must discard its queued native reply,
      * not just opening commands. STOP_CONVERSATION alone can leave that reply
      * queued until SPEAKING, when STOP_TTS is already audibly late. */
-    if (a->chat || action == 1 || action == 2 || action == 4) {
+    if (a->chat || action == 1 || action == 2 || action == 4 || action == 5) {
         if (!clear_dialog_queue(a, id)) return 0;
     } else if (!alice_method(a, STOP_CONVERSATION)) return 0;
     a->recognizing = 0;
     if (action == 3) a->focus_closing = 1;
-    if (action) command_event(a, action);
+    if (action == 5) ask_event(a);
+    else if (action) command_event(a, action);
     return 1;
 }
 
@@ -572,25 +589,28 @@ static void restore(struct agent *a) {
     unlink("/data/opt/alisa-standalone/native-muted");
 }
 
+static int enter_chat(struct agent *a, int pause_music) {
+    if (!a->chat) {
+        a->focus_session_ready = 0;
+        /* Focus may only duck MEDIA; a full chat keeps music paused until
+         * IDLE. A one-shot ASK lets focus duck and release it. */
+        if (pause_music && !request_music_pause(a)) return 0;
+    }
+    a->chat = 1;
+    if (!tts_lease_refresh(a->tts_gate_file)) return 0;
+    a->focus_closing = 0;
+    if (a->focus_enabled && !a->focus_recovering && a->focus_current < 0 && a->focus_pending < 0 &&
+        !focus_start(a, 0)) return 0;
+    return 1;
+}
+
 static int control(struct agent *a, const char *line) {
     a->heartbeat = seconds();
     if (a->chat && !tts_lease_refresh(a->tts_gate_file)) return 0;
     if (a->focus_enabled && write(a->focus_guard_fd, "P", 1) != 1) return 0;
     if (!strcmp(line, "PING")) status(a, "status");
-    else if (!strcmp(line, "CHAT")) {
-        if (!a->chat) {
-            a->focus_session_ready = 0;
-            /* Focus may only duck MEDIA; make the underlying music stay
-             * paused, including after the GPT dialog releases its focus. */
-            if (!request_music_pause(a)) return 0;
-        }
-        a->chat = 1;
-        if (!tts_lease_refresh(a->tts_gate_file)) return 0;
-        a->focus_closing = 0;
-        if (a->focus_enabled && !a->focus_recovering && a->focus_current < 0 && a->focus_pending < 0 &&
-            !focus_start(a, 0)) return 0;
-        status(a, "mode");
-    }
+    else if (!strcmp(line, "CHAT")) { if (!enter_chat(a, 1)) return 0; status(a, "mode"); }
+    else if (!strcmp(line, "ASK")) { if (!enter_chat(a, 0)) return 0; status(a, "mode"); }
     else if (!strcmp(line, "IDLE")) { restore(a); status(a, "mode"); }
     else if (!strcmp(line, "SPEAKING")) a->output_active = 1;
     else if (!strcmp(line, "QUIET")) a->output_active = 0;

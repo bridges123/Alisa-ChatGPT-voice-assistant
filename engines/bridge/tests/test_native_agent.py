@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -285,3 +286,15 @@ class NativeIntents(unittest.TestCase):
                                  ('скажи алиса открой чат', 0), ('Алиса, не закрывай чат', 0)]:
             data = phrase.encode()
             self.assertEqual(command(data, len(data)), expected, phrase)
+
+    def test_ask_action_is_ignored_by_the_browser_bridge(self):
+        library = ctypes.CDLL(str(ROOT / 'build/native_agent.host.so'))
+        command = library.alice_native_command
+        command.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+        command.restype = ctypes.c_int
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'commands.txt'
+            path.write_text('5\tспроси у чата\n', encoding='utf-8')
+            with patch.dict(os.environ, {'ALISA_COMMANDS_FILE': str(path)}):
+                data = 'Алиса, спроси у чата что такое сова'.encode()
+                self.assertEqual(command(data, len(data)), 0)

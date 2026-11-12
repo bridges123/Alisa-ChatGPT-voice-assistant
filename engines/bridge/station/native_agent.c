@@ -20,6 +20,7 @@ extern void *memmove(void *, const void *, size_t);
 extern int memcmp(const void *, const void *, size_t);
 extern size_t strlen(const char *);
 extern int strcmp(const char *, const char *);
+extern int strncmp(const char *, const char *, size_t);
 extern int snprintf(char *, size_t, const char *, ...);
 extern void _exit(int);
 extern void (*signal(int, void (*)(int)))(int);
@@ -226,7 +227,11 @@ int alice_native_command(const unsigned char *text, size_t length) {
     if (used >= sizeof(please) - 1 && !memcmp(value + used - sizeof(please) + 1,
                                              please, sizeof(please) - 1))
         value[used - sizeof(please) + 1] = 0;
-    int custom=configured_command(value);if(custom>=0)return custom;
+    int custom=configured_command(value,0,0);
+    /* One-shot ask is a native-client feature; the browser bridge keeps the
+     * stock Alice reply instead of swallowing the phrase. */
+    if(custom==5)return 0;
+    if(custom>=0)return custom;
     if (!strcmp(value, "открой чат")) return 1;
     if (!strcmp(value, "создай чат") || !strcmp(value, "создай новый чат")) return 2;
     if (!strcmp(value, "закрой чат") || !strcmp(value, "выйди из чата") ||

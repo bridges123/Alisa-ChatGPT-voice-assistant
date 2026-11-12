@@ -58,9 +58,14 @@ class NativeMusic(unittest.TestCase):
         self.server=socket.socket();self.server.bind(('127.0.0.1',0));self.server.listen(2);self.server.settimeout(3)
         self.addCleanup(self.server.close)
         template=root/'focus.wav';template.write_bytes(b'synthetic focus template')
+        commands=root/'commands.txt'
+        commands.write_text('1\tоткрой чат\n2\tсоздай новый чат\n3\tзакрой чат\n'
+                            '4\tоткрой предыдущий чат\n5\tспроси у чата\n'
+                            '5\tспроси у джипити\n5\tспроси у чатджипити\n',encoding='utf-8')
         self.process=subprocess.Popen(['/usr/bin/true'],bufsize=0,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             env={**os.environ,'LD_PRELOAD':str(self.library),'ALICE_NATIVE_AGENT':'1','ALICE_NATIVE_FOCUS':'1',
                  'ALICE_NATIVE_PORT':str(self.server.getsockname()[1]),'ALICE_NATIVE_LOCK':str(root/'lock'),
+                 'ALISA_COMMANDS_FILE':str(commands),
                  'ALICE_TTS_GATE_FILE':str(root/'lease'),'ALICE_FOCUS_TEMPLATE':str(template),'ALICE_FOCUS_DIRECTORY':str(root),
                  'ALICE_NATIVE_WIRE_FORMAT':self.wire_format})
         self.addCleanup(self.cleanup)
@@ -128,6 +133,37 @@ class NativeMusic(unittest.TestCase):
         self.assertEqual(self.message(),{'event':'command','action':'open'})
         self.assertEqual(self.rpc()[7],b'AliceCapability')
         self.assertEqual(self.control('PING')['commands'],1)
+
+    def test_ask_aliases_emit_question_and_clear_queue(self):
+        for index,alias in enumerate(('спроси у чата','спроси у джипити','спроси у чатджипити')):
+            identifier=('00000000-0000-4000-8000-%012d'%(60+index)).encode()
+            request=field(1,('Алиса, '+alias+' Что такое СОВА?').encode())+number(16)+number(1)+number(32)+number(1)
+            payload=number(8)+number(3)+field(7,identifier)+field(15,request)
+            envelope=self.envelope(3,payload)
+            self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+            self.assertEqual(self.message(),{'event':'ask','text':'что такое сова'},alias)
+            remote=self.rpc();self.assertEqual(remote[7],b'AliceCapability')
+            method=fields(remote[8]);self.assertEqual(method[1],6);self.assertEqual(method[10],identifier)
+        self.assertEqual(self.control('PING')['ask_requests'],3)
+        self.assertEqual(self.control('PING')['commands'],0)
+
+    def test_bare_ask_phrase_opens_normal_chat(self):
+        identifier=b'00000000-0000-4000-8000-000000000070'
+        request=field(1,'Алиса, спроси у чата'.encode())+number(16)+number(1)+number(32)+number(1)
+        payload=number(8)+number(3)+field(7,identifier)+field(15,request)
+        envelope=self.envelope(3,payload)
+        self.peer.sendall(len(envelope).to_bytes(4,'little')+envelope)
+        self.assertEqual(self.message(),{'event':'command','action':'open'})
+        remote=self.rpc();self.assertEqual(remote[7],b'AliceCapability')
+        method=fields(remote[8]);self.assertEqual(method[1],6);self.assertEqual(method[10],identifier)
+        self.assertEqual(self.control('PING')['ask_requests'],0)
+
+    def test_ask_focus_does_not_pause_music(self):
+        self.state(0);self.control('ASK')
+        self.assertEqual(self.control('PING')['music_pause_requests'],0)
+        self.assertEqual(self.rpc()[7],b'AudioFilePlayerCapability')
+        self.assertEqual(self.control('IDLE')['focus_ready'],0)
+        self.rpc()
 
     def test_factory_final_commands_do_not_require_retail_request_flag(self):
         for index,flag in enumerate((None,0)):
