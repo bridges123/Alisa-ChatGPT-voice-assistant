@@ -70,6 +70,22 @@ class ConfigTests(unittest.TestCase):
   for value in (0.5,17,True,'4'):
    bad=configured('native');bad['mic_gain']=value
    with self.subTest(value=value),self.assertRaises(ValueError):state.validate(bad)
+ def test_ask_timing_is_exported_only_when_changed(self):
+  from alisa_cli import runtime
+  c=configured('native')
+  env=runtime.native_environment(c)
+  for name in (b'ALISA_ASK_SILENCE',b'ALISA_ASK_USER_SILENCE',b'ALISA_ASK_FOLLOWUP',b'ALISA_ASK_VAD_RMS'):
+   self.assertNotIn(name,env)
+  c.update(ask_silence=6.0,ask_user_silence=3.0,ask_followup=12.0,ask_vad_rms=400)
+  env=runtime.native_environment(c)
+  for line in (b'export ALISA_ASK_SILENCE=6.0',b'export ALISA_ASK_USER_SILENCE=3.0',
+               b'export ALISA_ASK_FOLLOWUP=12.0',b'export ALISA_ASK_VAD_RMS=400'):
+   self.assertIn(line,env)
+  for value in (0.5,16,True,'4'):
+   bad=configured('native');bad['ask_silence']=value
+   with self.subTest(value=value),self.assertRaises(ValueError):state.validate(bad)
+  bad=configured('native');bad['ask_vad_rms']=10
+  with self.assertRaises(ValueError):state.validate(bad)
  def test_native_ask_passes_the_question_as_one_quoted_argument(self):
   from alisa_cli import runtime
   c=configured('native');question='что такое "сова" и зачем она'

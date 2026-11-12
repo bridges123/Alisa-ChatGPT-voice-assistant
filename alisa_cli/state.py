@@ -41,6 +41,7 @@ def defaults(mode):
     if mode not in MODES:raise ValueError('Выберите native или bridge')
     return {'version':1,'mode':mode,'host':'','user':'root','port':2222,'identity':None,
         'autostart':False,'led':'rainbow','led_scope':'speaking','listen_led':False,'disable_stun':False,'display':'eyes','mic_gain':1.0,
+        'ask_silence':4.0,'ask_user_silence':2.0,'ask_followup':10.0,'ask_vad_rms':300,
         'phrases':{key:(list(value) if isinstance(value,list) else value) for key,value in DEFAULT_PHRASES.items()},'installed':False,
         'vpn':{'enabled':False,'autostart':False,'required':False}}
 
@@ -119,6 +120,12 @@ def validate(value):
     if not isinstance(value.get('disable_stun',False),bool):raise ValueError('Отключение STUN должно быть включено или выключено')
     gain=value.get('mic_gain',1.0)
     if isinstance(gain,bool) or not isinstance(gain,(int,float)) or not 1.0<=float(gain)<=16.0:raise ValueError('Усиление микрофона должно быть от 1 до 16')
+    for key,low,high in [('ask_silence',1.0,15.0),('ask_user_silence',0.5,10.0),('ask_followup',3.0,30.0)]:
+        item=value.get(key,{'ask_silence':4.0,'ask_user_silence':2.0,'ask_followup':10.0}[key])
+        if isinstance(item,bool) or not isinstance(item,(int,float)) or not low<=float(item)<=high:
+            raise ValueError('Пауза одноразового вопроса вне допустимого диапазона')
+    vad=value.get('ask_vad_rms',300)
+    if isinstance(vad,bool) or not isinstance(vad,int) or not 50<=vad<=5000:raise ValueError('Порог микрофона должен быть от 50 до 5000')
     if not isinstance(value.get('midi_matrix',False),bool):raise ValueError('Матрица Миди должна быть включена или выключена')
     if not isinstance(value.get('midi_eyes',False),bool):raise ValueError('Глаза Миди должны быть включены или выключены')
     if not isinstance(value.get('midi_fire',False),bool):raise ValueError('Пламя Миди должно быть включено или выключено')

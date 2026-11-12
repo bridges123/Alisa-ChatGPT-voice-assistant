@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <functional>
@@ -104,9 +105,14 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
     std::atomic<bool> open_cue_played{false};
     std::atomic<unsigned int> microphone_frames{0},microphone_nonzero{0},muted_frames{0};
     std::atomic<unsigned int> microphone_peak{0},microphone_peak_sent{0},microphone_rms_max{0},microphone_speech_blocks{0};
+    std::atomic<unsigned int> user_speech_events{0};
     // Applied to the microphone copy only, before Opus encoding. Alice's own
     // recognizer keeps the untouched VQE output.
     float microphone_gain=1.0f;
+    // One-shot termination: pause after the answer, pause after the user's
+    // speech and a bound on waiting for an answer to a follow-up.
+    float ask_silence=4.0f,ask_user_silence=2.0f,ask_followup=10.0f;
+    int ask_vad_rms=300;
     std::map<int,unsigned int> sample_sizes;
     std::map<int,unsigned int> timestamp_steps;uint32_t last_timestamp=0;
     uint32_t source_ssrc=0;bool have_timestamp=false;
@@ -288,10 +294,23 @@ public:
     explicit VoiceCall(CallOptions settings):options(std::move(settings)){
         // Optional microphone gain for quiet rooms or distant speech. Read
         // once; the installer exports it only when it differs from 1.
-        if(const char *text=getenv("ALISA_MIC_GAIN")){
+        auto env_float=[](const char *name,float fallback,float low,float high){
+            const char *text=getenv(name);
+            if(!text)return fallback;
             char *end=nullptr;float value=std::strtof(text,&end);
-            if(end&&end!=text&&!*end&&value>=1.0f&&value<=16.0f)microphone_gain=value;
-        }
+            return end&&end!=text&&!*end&&value>=low&&value<=high?value:fallback;
+        };
+        auto env_int=[](const char *name,int fallback,int low,int high){
+            const char *text=getenv(name);
+            if(!text)return fallback;
+            char *end=nullptr;long value=std::strtol(text,&end,10);
+            return end&&end!=text&&!*end&&value>=low&&value<=high?static_cast<int>(value):fallback;
+        };
+        microphone_gain=env_float("ALISA_MIC_GAIN",1.0f,1.0f,16.0f);
+        ask_silence=env_float("ALISA_ASK_SILENCE",4.0f,1.0f,15.0f);
+        ask_user_silence=env_float("ALISA_ASK_USER_SILENCE",2.0f,0.5f,10.0f);
+        ask_followup=env_float("ALISA_ASK_FOLLOWUP",10.0f,3.0f,30.0f);
+        ask_vad_rms=env_int("ALISA_ASK_VAD_RMS",300,50,5000);
 #ifdef ALISA_USE_NETEQ
         neteq.reset(alisa_neteq_create(80,600,-1));if(!neteq)throw std::runtime_error("neteq_init_failed");
 #endif
@@ -318,6 +337,9 @@ public:
             {"audible_blocks",audible_blocks.load()},
             {"microphone_frames",microphone_frames.load()},{"microphone_nonzero",microphone_nonzero.load()},{"muted_frames",muted_frames.load()},
             {"microphone_peak",microphone_peak.load()},{"microphone_rms",microphone_rms_max.load()},
+            {"user_speech_events",user_speech_events.load()},
+            {"ask_silence",ask_silence},{"ask_user_silence",ask_user_silence},
+            {"ask_followup",ask_followup},{"ask_vad_rms",ask_vad_rms},
             {"microphone_peak_sent",microphone_peak_sent.load()},{"microphone_gain",microphone_gain},
             {"microphone_speech_blocks",microphone_speech_blocks.load()},
             {"channel_open",channel_open.load()},{"assistant_text_seen",assistant_seen.load()},
@@ -437,7 +459,9 @@ public:
         SpeechTempo tempo;bool tail_flushed=false;
 #endif
         std::deque<short> microphone;
-        auto last_speech=Clock::time_point::min(),mute_check=Clock::time_point::min();float gain=1.995262f;unsigned int silence=0;
+        auto last_speech=Clock::time_point::min(),last_user_speech=Clock::time_point::min(),user_spoke_at=Clock::time_point::min(),mute_check=Clock::time_point::min();
+        bool assistant_after_user=true;int speech_run=0;
+        float gain=1.995262f;unsigned int silence=0;
         bool microphone_allowed=false;
         while(!stop_requested&&!stopping&&!failed){
             if(flush_output.exchange(false)){
@@ -484,18 +508,28 @@ public:
                     microphone_peak=std::max(microphone_peak.load(),static_cast<unsigned int>(peak));
                     unsigned int rms=static_cast<unsigned int>(std::sqrt(static_cast<double>(power)/320.0));
                     microphone_rms_max=std::max(microphone_rms_max.load(),rms);
-                    int sent_peak=peak;
+                    int sent_peak=peak;long long sent_power=power;
                     if(microphone_gain>1.0001f){
-                        sent_peak=0;
+                        sent_peak=0;sent_power=0;
                         for(short &value:in){
                             long scaled=std::lround(value*microphone_gain);
                             if(scaled>32767)scaled=32767;else if(scaled<-32768)scaled=-32768;
                             value=static_cast<short>(scaled);
                             sent_peak=std::max(sent_peak,std::abs(int(value)));
+                            sent_power+=int(value)*int(value);
                         }
                     }
                     microphone_peak_sent=std::max(microphone_peak_sent.load(),static_cast<unsigned int>(sent_peak));
                     if(sent_peak>700)++microphone_speech_blocks;
+                    // The server cannot report a barge-in reliably in this
+                    // backend, so the client watches the level it actually
+                    // sends. Three consecutive blocks debounce short clicks.
+                    unsigned int sent_rms=static_cast<unsigned int>(std::sqrt(static_cast<double>(sent_power)/320.0));
+                    if(static_cast<int>(sent_rms)>=ask_vad_rms){
+                        last_user_speech=Clock::now();
+                        if(speech_run<3)++speech_run;
+                        if(speech_run==3){++user_speech_events;assistant_after_user=false;user_spoke_at=Clock::now();}
+                    }else speech_run=0;
                 }
             }
             auto encode_start=Clock::now();
@@ -571,7 +605,7 @@ public:
             if(sound)++nonzero;
             int peak=0;long long power=0;
             for(short value:samples){peak=std::max(peak,std::abs(int(value)));power+=int(value)*int(value);}
-            if(power>1920LL*128*128){last_speech=Clock::now();++audible_blocks;thinking=false;}
+            if(power>1920LL*128*128){last_speech=Clock::now();++audible_blocks;thinking=false;assistant_after_user=true;}
             is_speaking=last_speech!=Clock::time_point::min()&&Clock::now()-last_speech<std::chrono::milliseconds(250);
             silence=peak?0:silence+1;if(silence>=6)gain=1.995262f;
             float wanted=peak?std::min(1.995262f,31128.0f/peak):1.995262f;
@@ -594,9 +628,21 @@ public:
                 answer.audible_blocks=audible_blocks.load();
                 if(answer.heard)answer.silence_seconds=std::chrono::duration<double>(Clock::now()-last_speech).count();
                 // While the backend says it is thinking, the filler is not the
-                // answer. A one-shot keeps a full pause before returning Alice.
-                if(one_shot_complete(answer,4.0)&&!thinking.load()){completion="silence";break;}
-                if(one_shot_timeout(std::chrono::duration<double>(Clock::now()-asked_at).count())){ask_timeout=true;completion="timeout";break;}
+                // answer. A one-shot keeps a full pause after the answer and
+                // after the user's own speech before returning Alice.
+                const auto now=Clock::now();
+                const double user_silence=last_user_speech==Clock::time_point::min()?3600.0:
+                    std::chrono::duration<double>(now-last_user_speech).count();
+                const double after_user=user_spoke_at==Clock::time_point::min()?0.0:
+                    std::chrono::duration<double>(now-user_spoke_at).count();
+                const bool answered_turn=assistant_after_user&&one_shot_complete(answer,ask_silence)&&
+                    user_silence>=ask_user_silence;
+                const bool no_followup=!assistant_after_user&&user_spoke_at!=Clock::time_point::min()&&
+                    after_user>=ask_followup&&user_silence>=ask_user_silence;
+                if(!thinking.load()&&(answered_turn||no_followup)){
+                    completion=no_followup?"followup_no_answer":"silence";break;
+                }
+                if(one_shot_timeout(std::chrono::duration<double>(now-asked_at).count())){ask_timeout=true;completion="timeout";break;}
             }
             tick+=std::chrono::milliseconds(20);std::this_thread::sleep_until(tick);
         }

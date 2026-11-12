@@ -67,6 +67,10 @@ def native_environment(config):
     if config.get('disable_stun',False):lines.append('export ALISA_DISABLE_STUN=1')
     gain=config.get('mic_gain',1.0)
     if float(gain)>1.0:lines.append('export ALISA_MIC_GAIN='+str(float(gain)))
+    if float(config.get('ask_silence',4.0))!=4.0:lines.append('export ALISA_ASK_SILENCE='+str(float(config['ask_silence'])))
+    if float(config.get('ask_user_silence',2.0))!=2.0:lines.append('export ALISA_ASK_USER_SILENCE='+str(float(config['ask_user_silence'])))
+    if float(config.get('ask_followup',10.0))!=10.0:lines.append('export ALISA_ASK_FOLLOWUP='+str(float(config['ask_followup'])))
+    if int(config.get('ask_vad_rms',300))!=300:lines.append('export ALISA_ASK_VAD_RMS='+str(int(config['ask_vad_rms'])))
     if config['vpn'].get('enabled',False):
         lines+=['export ALISA_VPN_REQUIRED=1','export ALISA_PROXY_URL=socks5h://127.0.0.1:18081','export ALISA_ICE_BIND_ADDRESS=172.31.254.1','export LD_PRELOAD='+TOOLS+'/mark.so']
     return ('\n'.join(lines)+'\n').encode()

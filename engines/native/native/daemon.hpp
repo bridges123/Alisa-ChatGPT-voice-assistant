@@ -68,9 +68,9 @@ class VoiceDaemon {
                 CallOptions options;
                 options.voice=settings.view().value("voice",std::string("cove"));
                 options.device=test_mode?"null":"default";
-                // A one-shot question is text-only: never open the microphone,
-                // so the answer cannot be mistaken for new user speech.
-                if(!test_mode&&!one_shot)options.microphone=(runtime_directory/"microphone.sock").string();
+                // The microphone is open for a one-shot too: the answer can be
+                // interrupted and a follow-up can be asked before it closes.
+                if(!test_mode)options.microphone=(runtime_directory/"microphone.sock").string();
                 if(one_shot)options.ask_text=request.value("text",std::string());
                 else{
                     options.conversation_id=entry.value("conversation_id",std::string());
