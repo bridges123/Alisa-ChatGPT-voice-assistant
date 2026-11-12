@@ -16,6 +16,7 @@
 #include <rtc/rtc.hpp>
 #include <opus.h>
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -102,6 +103,7 @@ class VoiceCall:public std::enable_shared_from_this<VoiceCall> {
 #endif
     std::atomic<bool> open_cue_played{false};
     std::atomic<unsigned int> microphone_frames{0},microphone_nonzero{0},muted_frames{0};
+    std::atomic<unsigned int> microphone_peak{0},microphone_rms_max{0},microphone_speech_blocks{0};
     std::map<int,unsigned int> sample_sizes;
     std::map<int,unsigned int> timestamp_steps;uint32_t last_timestamp=0;
     uint32_t source_ssrc=0;bool have_timestamp=false;
@@ -306,6 +308,8 @@ public:
             {"sent",sent.load()},{"decoded",decoded.load()},{"nonzero",nonzero.load()},
             {"audible_blocks",audible_blocks.load()},
             {"microphone_frames",microphone_frames.load()},{"microphone_nonzero",microphone_nonzero.load()},{"muted_frames",muted_frames.load()},
+            {"microphone_peak",microphone_peak.load()},{"microphone_rms",microphone_rms_max.load()},
+            {"microphone_speech_blocks",microphone_speech_blocks.load()},
             {"channel_open",channel_open.load()},{"assistant_text_seen",assistant_seen.load()},
             {"probe_reply_match",probe_reply_match.load()},{"event_types",event_types},
             {"sample_sizes",sample_sizes},{"timestamp_steps",timestamp_steps},{"ssrc_changes",playout.source_changes},
@@ -456,7 +460,22 @@ public:
                     }
                 }
                 if(!microphone_allowed){std::fill(std::begin(in),std::end(in),0);++muted_frames;}
-                else for(short value:in)if(value){++microphone_nonzero;break;}
+                else{
+                    // Diagnostics only: the same samples are still encoded and
+                    // sent unchanged. Peak/RMS show whether speech reaches the
+                    // client at a level the server's VAD can act on.
+                    bool any=false;int peak=0;long long power=0;
+                    for(short value:in){
+                        if(value)any=true;
+                        peak=std::max(peak,std::abs(int(value)));
+                        power+=int(value)*int(value);
+                    }
+                    if(any)++microphone_nonzero;
+                    microphone_peak=std::max(microphone_peak.load(),static_cast<unsigned int>(peak));
+                    unsigned int rms=static_cast<unsigned int>(std::sqrt(static_cast<double>(power)/320.0));
+                    microphone_rms_max=std::max(microphone_rms_max.load(),rms);
+                    if(peak>700)++microphone_speech_blocks;
+                }
             }
             auto encode_start=Clock::now();
             int size=opus_encode(encoder.get(),in,320,encoded,sizeof(encoded));
